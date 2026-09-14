@@ -181,3 +181,12 @@ third_party/           acarsdec, dumpvdl2, libacars (created by install.sh, not 
 - Several message layouts follow [acars-decoder-typescript](https://github.com/airframesio/acars-decoder-typescript)
   (MIT) and [acars-message-documentation](https://github.com/airframesio/acars-message-documentation) by Airframes.
 - Map: [Leaflet](https://leafletjs.com/) and © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors.
+
+## License
+
+No rights reserved. This project is dedicated to the public domain under
+[CC0 1.0 Universal](LICENSE): copy, modify, use and share it for any purpose, commercial or not, without
+asking and without attribution.
+
+This covers the code in this repository. The decoders that `install.sh` downloads (acarsdec, dumpvdl2,
+libacars) keep their own licenses listed above, and map tiles remain © OpenStreetMap contributors.
