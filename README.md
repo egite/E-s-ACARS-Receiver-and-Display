@@ -176,11 +176,32 @@ third_party/           acarsdec, dumpvdl2, libacars (created by install.sh, not 
 
 ## Credits
 
-- [acarsdec](https://github.com/f00b4r0/acarsdec) (GPL-2.0), [dumpvdl2](https://github.com/szpajder/dumpvdl2)
-  (GPL-3.0) and [libacars](https://github.com/szpajder/libacars) (MIT) do the decoding.
-- Several message layouts follow [acars-decoder-typescript](https://github.com/airframesio/acars-decoder-typescript)
-  (MIT) and [acars-message-documentation](https://github.com/airframesio/acars-message-documentation) by Airframes.
-- Map: [Leaflet](https://leafletjs.com/) and © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors.
+This project stands on the work of others. Thank you to the authors and contributors of:
+
+**Decoding and radio**
+
+- [acarsdec](https://github.com/f00b4r0/acarsdec) (GPL-2.0): VHF ACARS decoder, originally written by
+  [Thierry Leconte](https://github.com/TLeconte/acarsdec) and maintained by Thibaut Varène (f00b4r0).
+- [dumpvdl2](https://github.com/szpajder/dumpvdl2) (GPL-3.0): VDL Mode 2 decoder, by Tomasz Lemiesz (szpajder).
+- [libacars](https://github.com/szpajder/libacars) (MIT): ACARS, CPDLC, ADS-C and MIAM parsing used by both
+  decoders, also by Tomasz Lemiesz.
+- [rtl-sdr / librtlsdr](https://osmocom.org/projects/rtl-sdr/wiki) (GPL-2.0), from Osmocom: the dongle
+  driver library and the `rtl_test` / `rtl_eeprom` tools used during setup.
+
+**Message formats**
+
+- [acars-decoder-typescript](https://github.com/airframesio/acars-decoder-typescript) (MIT) and
+  [acars-message-documentation](https://github.com/airframesio/acars-message-documentation) by
+  [Airframes](https://airframes.io/): several message layouts in `web/translate.py` follow their work.
+
+**Web display**
+
+- [aiohttp](https://github.com/aio-libs/aiohttp) (Apache-2.0): web server, WebSocket and HTTP client.
+- [Leaflet](https://leafletjs.com/) (BSD-2-Clause): the map.
+- Map data and tiles © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL), used
+  under the OSM [tile usage policy](https://operations.osmfoundation.org/policies/tiles/).
+- [Virtual Radar Server](https://www.virtualradarserver.co.uk/), by Andrew Whewell: optional ADS-B
+  aircraft positions and details, read from its `AircraftList.json`.
 
 ## License
 
@@ -188,5 +209,6 @@ No rights reserved. This project is dedicated to the public domain under
 [CC0 1.0 Universal](LICENSE): copy, modify, use and share it for any purpose, commercial or not, without
 asking and without attribution.
 
-This covers the code in this repository. The decoders that `install.sh` downloads (acarsdec, dumpvdl2,
-libacars) keep their own licenses listed above, and map tiles remain © OpenStreetMap contributors.
+This covers the code in this repository. The software that `install.sh` downloads or installs (acarsdec,
+dumpvdl2, libacars, rtl-sdr, aiohttp, Leaflet) keeps its own license, listed above, and map tiles remain
+© OpenStreetMap contributors.
