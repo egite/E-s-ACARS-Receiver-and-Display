@@ -38,7 +38,7 @@ airband bandpass filter and a splitter.
 ## Install
 
 ```bash
-git clone <this repository> ACARS && cd ACARS
+git clone https://github.com/egite/E-s-ACARS-Receiver-and-Display.git ACARS && cd ACARS
 ./install.sh
 ```
 
