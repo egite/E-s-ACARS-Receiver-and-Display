@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ACARS · VDL2 Stats</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="stats-page">
+<header class="topbar">
+  <div class="brand"><span class="conn up" id="conn" title="Updated every 15 seconds"></span>ACARS · VDL2 Stats</div>
+  <div class="stats" id="stats"></div>
+  <nav class="nav-links"><a href="/">Flights</a><a href="/raw">Raw feed</a></nav>
+</header>
+
+<main class="stats-main" id="main">
+  <section id="alerts" class="alert-list" aria-live="polite"></section>
+
+  <h2 class="section-title">Receivers</h2>
+  <section class="rx-grid" id="receivers"></section>
+
+  <h2 class="section-title">Traffic <span class="muted" id="traffic-span"></span></h2>
+  <section class="viz-card">
+    <div class="viz-head">
+      <h3>Messages per 5 minutes</h3>
+      <div class="legend"><span><i class="sw acars"></i>ACARS</span><span><i class="sw vdl2"></i>VDL2</span></div>
+      <label class="chip"><input type="checkbox" id="include-link"> Include link frames</label>
+    </div>
+    <div id="timeline" class="viz-body"></div>
+  </section>
+
+  <div class="viz-grid">
+    <section class="viz-card">
+      <div class="viz-head"><h3>Frequencies</h3><span class="muted">frames in memory · avg signal</span></div>
+      <div id="frequencies" class="viz-body"></div>
+    </section>
+    <section class="viz-card">
+      <div class="viz-head"><h3>Top airlines</h3><span class="muted">content messages</span></div>
+      <div id="airlines" class="viz-body"></div>
+    </section>
+    <section class="viz-card">
+      <div class="viz-head"><h3>Message types</h3><span class="muted">all frames in memory</span></div>
+      <div id="types" class="viz-body"></div>
+    </section>
+    <section class="viz-card">
+      <div class="viz-head"><h3>Ground stations</h3></div>
+      <div id="stations" class="viz-body"></div>
+    </section>
+  </div>
+
+  <h2 class="section-title">Server</h2>
+  <section class="tile-row" id="server"></section>
+</main>
+
+<div class="viz-tip" id="tip" hidden></div>
+<script src="/static/common.js"></script>
+<script src="/static/stats.js"></script>
+</body>
+</html>

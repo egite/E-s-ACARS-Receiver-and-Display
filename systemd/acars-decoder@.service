@@ -1,0 +1,16 @@
+[Unit]
+Description=ACARS/VDL2 decoder (%i) using settings from config.json
+After=network.target
+# Keep retrying forever: a dongle can take a moment to appear after boot or a replug.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@PROJECT_DIR@
+ExecStart=/usr/bin/python3 @PROJECT_DIR@/receiver.py %i
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ACARS · VDL2 Live</title>
+<link rel="stylesheet" href="/leaflet/leaflet.css">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="conn" id="conn" title="Disconnected"></span>ACARS · VDL2 Live</div>
+  <div class="stats" id="stats"></div>
+  <div class="header-actions">
+    <span id="emergency" hidden></span>
+    <button type="button" class="bell" id="alerts-btn">Alerts</button>
+    <nav class="nav-links"><a href="/stats">Stats</a><a href="/raw">Raw feed</a></nav>
+  </div>
+</header>
+
+<main class="layout flights-layout">
+  <section class="map-panel" id="map-panel">
+    <div id="map"></div>
+    <aside class="detail" id="detail" hidden aria-label="Selected flight">
+      <button class="close-btn" id="detail-close" type="button" title="Close (Esc)" aria-label="Close">×</button>
+      <button class="btn detail-map-btn" id="detail-map" type="button">Show on map</button>
+      <div class="detail-head" id="detail-head"></div>
+      <ol class="timeline full" id="history"></ol>
+    </aside>
+    <button class="peek" id="peek" type="button" hidden></button>
+    <div class="map-controls">
+      <label><input type="checkbox" id="f-traffic" checked> All ADS-B traffic</label>
+      <label><input type="checkbox" id="f-stations" checked> Ground stations</label>
+      <label class="winds-control">Winds aloft
+        <select id="f-winds" aria-label="Winds aloft layer">
+          <option value="off">Off</option>
+          <option value="all">All altitudes</option>
+          <option value="low">Below 10,000 ft</option>
+          <option value="mid">10,000–25,000 ft</option>
+          <option value="high">Above 25,000 ft</option>
+        </select></label>
+      <div class="legend winds-legend" id="winds-legend" hidden>
+        <span><i class="sw" style="background:#0e7fa3"></i>&lt;10k ft</span>
+        <span><i class="sw" style="background:#29b6d9"></i>10–25k</span>
+        <span><i class="sw" style="background:#9be7f5"></i>&gt;25k</span>
+      </div>
+      <div class="legend">
+        <span><i class="sw acars"></i>ACARS</span>
+        <span><i class="sw vdl2"></i>VDL2</span>
+        <span><i class="sw both"></i>Both</span>
+        <span><i class="sw reported"></i>Reported pos.</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel cards-panel">
+    <div class="panel-head">
+      <h2>Flights <span class="count" id="card-count"></span></h2>
+      <select id="f-time" aria-label="Message time" title="Only show messages received within this time">
+        <option value="0" selected data-short="All">All messages</option>
+        <option value="300" data-short="5 min">Last 5 minutes</option>
+        <option value="900" data-short="15 min">Last 15 minutes</option>
+        <option value="1800" data-short="30 min">Last 30 minutes</option>
+        <option value="3600" data-short="1 hour">Last hour</option>
+        <option value="10800" data-short="3 hours">Last 3 hours</option>
+        <option value="21600" data-short="6 hours">Last 6 hours</option>
+      </select>
+      <select id="card-sort" aria-label="Sort flights">
+        <option value="recent" data-short="Latest">Latest message</option>
+        <option value="count" data-short="Most msgs">Most messages</option>
+        <option value="callsign" data-short="Callsign">Callsign</option>
+      </select>
+      <button type="button" class="btn" id="types-btn" title="Choose which ACARS and VDL2 message types to show">Message types</button>
+      <input type="search" id="f-text" placeholder="Search callsign, reg, type, route, message…">
+    </div>
+    <div class="cards" id="cards"></div>
+  </section>
+</main>
+
+<nav class="tabbar" id="tabbar" aria-label="View">
+  <button type="button" data-view="flights">Flights <span class="tab-count" id="tab-count"></span></button>
+  <button type="button" data-view="map">Map</button>
+</nav>
+
+<script src="/leaflet/leaflet.js"></script>
+<script src="/static/common.js"></script>
+<script src="/static/alerts.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

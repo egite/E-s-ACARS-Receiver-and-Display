@@ -1,0 +1,43 @@
+{
+  "home": {"lat": 39.8617, "lon": -104.6731, "name": "My receiver"},
+
+  "receivers": {
+    "acars": {
+      "enabled": true,
+      "device": "ACARS1",
+      "gain": 40,
+      "ppm": 0,
+      "frequencies": [129.125, 130.025, 130.450, 131.125, 131.550],
+      "binary": "third_party/acarsdec/build/acarsdec",
+      "log_file": null
+    },
+    "vdl2": {
+      "enabled": true,
+      "device": "VDL2_1",
+      "gain": 40,
+      "ppm": 0,
+      "frequencies": [136.650, 136.700, 136.725, 136.775, 136.800, 136.875, 136.975],
+      "binary": "third_party/dumpvdl2/build/src/dumpvdl2",
+      "log_file": null
+    }
+  },
+  "librtlsdr_preload": "",
+
+  "http_host": "0.0.0.0",
+  "http_port": 8686,
+  "acars_udp_port": 5550,
+  "vdl2_udp_port": 5555,
+
+  "vrs_url": "",
+  "vrs_feed": null,
+  "vrs_poll_secs": 5,
+
+  "history_hours": 2,
+
+  "health": {
+    "silence_minutes": {"acars": 30, "vdl2": 5},
+    "ppm_tolerance": 3,
+    "auto_ppm": false
+  },
+  "max_position_km": 1000
+}

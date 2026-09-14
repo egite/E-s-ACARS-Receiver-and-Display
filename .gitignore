@@ -1,0 +1,12 @@
+# Personal settings (home location, VRS address) - copy config.example.json to config.json
+config.json
+
+# Decoder sources and builds - install.sh clones and builds these
+third_party/
+
+# Local survey logs and dongle EEPROM backups from the original setup
+archive/
+
+__pycache__/
+*.pyc
+*.log

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ACARS · VDL2 Raw Feed</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="conn" id="conn" title="Disconnected"></span>ACARS · VDL2 Raw Feed</div>
+  <div class="stats" id="stats"></div>
+  <nav class="nav-links"><a href="/">Flights</a><a href="/stats">Stats</a></nav>
+</header>
+
+<main class="raw-layout panel">
+  <div class="panel-head">
+    <div class="filters">
+      <button type="button" class="btn" id="types-btn" title="Choose which ACARS and VDL2 message types to show">Message types</button>
+      <label class="chip" title="Show the plain-English translation under each message"><input type="checkbox" id="f-english"> Translation</label>
+    </div>
+    <input type="search" id="f-text" placeholder="Filter: flight, reg, ICAO, label, text…">
+    <button id="pause" class="btn">Pause</button>
+    <span class="muted" id="pending"></span>
+  </div>
+  <ol class="stream" id="stream"></ol>
+</main>
+
+<script src="/static/common.js"></script>
+<script src="/static/raw.js"></script>
+</body>
+</html>

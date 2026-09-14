@@ -1,0 +1,16 @@
+[Unit]
+Description=ACARS/VDL2 web display
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@PROJECT_DIR@/web
+ExecStart=/usr/bin/python3 @PROJECT_DIR@/web/server.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
