@@ -1,0 +1,13 @@
+block,decoder,messages,seconds,cpu_secs,status,load
+1,acarsdec,130,1200,35.9,OK,1.40
+1,xng,444,1200,292.1,OK,1.61
+2,acarsdec,183,1200,35.6,OK,0.81
+2,xng,196,1200,291.9,OK,1.24
+3,acarsdec,59,1200,35.5,OK,1.70
+3,xng,94,1200,291.6,OK,1.39
+4,acarsdec,130,1200,35.5,OK,1.51
+4,xng,204,1200,290.9,OK,1.89
+5,acarsdec,277,1200,35.6,OK,1.89
+5,xng,178,1200,291.4,OK,2.38
+6,acarsdec,50,1200,35.5,OK,1.03
+6,xng,204,1200,290.6,OK,1.13

@@ -10,3 +10,6 @@ archive/
 __pycache__/
 *.pyc
 *.log
+
+# Trial harness output (logs, captures, the xng binary)
+tools/decoder-trial/run/

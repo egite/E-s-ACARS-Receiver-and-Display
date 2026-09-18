@@ -1,0 +1,559 @@
+<title>ACARS Receiver Migration</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --paper:#F4F2F6;
+    --surface:#FFFFFF;
+    --surface-2:#ECE8F0;
+    --ink:#1A1622;
+    --ink-2:#4A4356;
+    --ink-3:#6E6680;
+    --rule:#D8D2E0;
+    --rule-2:#C2BACD;
+    --magenta:#B5006E;
+    --magenta-soft:#F7E4EF;
+    --blue:#1F5C99;
+    --blue-soft:#E1EBF5;
+    --green:#2E7D4F;
+    --amber:#9A5B00;
+    --amber-soft:#FBEEDA;
+    --red:#A81E2D;
+    --red-soft:#FAE4E6;
+    --shadow:0 1px 2px rgba(26,22,34,.06),0 4px 14px rgba(26,22,34,.05);
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --paper:#15121B;
+      --surface:#1D1926;
+      --surface-2:#262032;
+      --ink:#EDE9F2;
+      --ink-2:#B6AEC4;
+      --ink-3:#8B8299;
+      --rule:#322B40;
+      --rule-2:#443B54;
+      --magenta:#FF63AC;
+      --magenta-soft:#3A1329;
+      --blue:#7FB3E3;
+      --blue-soft:#14273A;
+      --green:#6BC08D;
+      --amber:#E0A44A;
+      --amber-soft:#3A2A10;
+      --red:#F0808C;
+      --red-soft:#3B1A1E;
+      --shadow:0 1px 2px rgba(0,0,0,.4),0 4px 14px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#15121B;
+    --surface:#1D1926;
+    --surface-2:#262032;
+    --ink:#EDE9F2;
+    --ink-2:#B6AEC4;
+    --ink-3:#8B8299;
+    --rule:#322B40;
+    --rule-2:#443B54;
+    --magenta:#FF63AC;
+    --magenta-soft:#3A1329;
+    --blue:#7FB3E3;
+    --blue-soft:#14273A;
+    --green:#6BC08D;
+    --amber:#E0A44A;
+    --amber-soft:#3A2A10;
+    --red:#F0808C;
+    --red-soft:#3B1A1E;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 4px 14px rgba(0,0,0,.3);
+  }
+
+  *{box-sizing:border-box}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:"Source Sans 3",ui-sans-serif,system-ui,sans-serif;
+    font-size:16.5px;
+    line-height:1.62;
+    margin:0;
+    padding-inline:20px;
+    padding-block:0 72px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:860px;margin-inline:auto}
+  .col{max-width:64ch}
+
+  h1,h2,h3,.eyebrow,th,.step-n,.tag{font-family:Archivo,ui-sans-serif,system-ui,sans-serif}
+  h1{font-size:clamp(2rem,5vw,2.9rem);font-weight:700;line-height:1.08;letter-spacing:-.02em;margin:0;text-wrap:balance}
+  h2{font-size:1.45rem;font-weight:600;letter-spacing:-.01em;margin:0;text-wrap:balance}
+  h3{font-size:1.06rem;font-weight:600;margin:0 0 6px;text-wrap:balance}
+  p{margin:0}
+  a{color:var(--magenta)}
+  code,kbd,pre{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,monospace}
+  code{font-size:.88em;background:var(--surface-2);padding:.1em .38em;border-radius:3px}
+
+  .eyebrow{
+    font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.13em;
+    color:var(--magenta);margin:0;
+  }
+
+  /* masthead */
+  header.mast{
+    border-bottom:2px solid var(--ink);
+    padding-block:44px 22px;
+    display:flex;flex-direction:column;gap:18px;
+  }
+  .mast .col{display:flex;flex-direction:column;gap:14px}
+  .lede{font-size:1.12rem;color:var(--ink-2);text-wrap:pretty}
+  .route{
+    display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;
+    font-family:"IBM Plex Mono",monospace;font-size:.82rem;color:var(--ink-2);
+  }
+  .route b{color:var(--ink);font-weight:500}
+  .route .arrow{color:var(--magenta);font-weight:600}
+
+  section{display:flex;flex-direction:column;gap:18px;padding-block:44px}
+  section + section{border-top:1px solid var(--rule)}
+  .sec-head{display:flex;flex-direction:column;gap:7px}
+  .stack{display:flex;flex-direction:column;gap:14px}
+
+  /* tables */
+  .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  table{border-collapse:collapse;width:100%;font-size:.92rem;min-width:480px}
+  th{
+    text-align:left;font-size:.7rem;font-weight:600;text-transform:uppercase;
+    letter-spacing:.09em;color:var(--ink-3);
+    border-bottom:1.5px solid var(--rule-2);padding:0 14px 7px 0;white-space:nowrap;
+  }
+  td{border-bottom:1px solid var(--rule);padding:9px 14px 9px 0;vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  td.num{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
+  td.k{font-family:"IBM Plex Mono",monospace;font-size:.84rem;color:var(--ink-2);white-space:nowrap}
+
+  .tag{
+    display:inline-block;font-size:.66rem;font-weight:600;text-transform:uppercase;
+    letter-spacing:.08em;padding:2px 7px;border-radius:3px;white-space:nowrap;
+  }
+  .tag.ok{background:var(--blue-soft);color:var(--blue)}
+  .tag.no{background:var(--red-soft);color:var(--red)}
+  .tag.est{background:var(--amber-soft);color:var(--amber)}
+
+  /* callouts */
+  .note{
+    border-left:3px solid var(--rule-2);
+    padding:2px 0 2px 16px;color:var(--ink-2);
+  }
+  .note.warn{border-left-color:var(--amber)}
+  .note.stop{border-left-color:var(--red)}
+  .note.key{border-left-color:var(--magenta)}
+  .note strong{color:var(--ink)}
+
+  /* code */
+  pre{
+    margin:0;background:var(--surface);border:1px solid var(--rule);
+    border-radius:5px;padding:14px 16px;overflow-x:auto;
+    font-size:.82rem;line-height:1.65;color:var(--ink);
+  }
+  pre .c{color:var(--ink-3)}
+  pre .hl{color:var(--magenta)}
+
+  /* numbered procedure */
+  ol.steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:26px}
+  ol.steps > li{display:grid;grid-template-columns:36px 1fr;gap:16px;align-items:start}
+  .step-n{
+    font-size:.82rem;font-weight:700;color:var(--magenta);
+    font-variant-numeric:tabular-nums;
+    border-top:2px solid var(--magenta);padding-top:5px;
+  }
+  .step-b{display:flex;flex-direction:column;gap:10px;min-width:0}
+
+  /* chart */
+  .chart{background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:18px 16px 12px}
+  .chart svg{display:block;width:100%;height:auto;max-width:100%}
+  .cap{font-size:.82rem;color:var(--ink-3);text-wrap:pretty}
+
+  /* inventory cards */
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}
+  .card{
+    background:var(--surface);border:1px solid var(--rule);border-radius:6px;
+    padding:14px 16px;display:flex;flex-direction:column;gap:5px;box-shadow:var(--shadow);
+  }
+  .card .lbl{font-size:.68rem;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--ink-3);font-family:Archivo,sans-serif}
+  .card .val{font-family:"IBM Plex Mono",monospace;font-size:.9rem;color:var(--ink);word-break:break-word}
+
+  ul.plain{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:8px}
+  ul.plain li::marker{color:var(--magenta)}
+
+  footer{border-top:2px solid var(--ink);padding-top:18px;margin-top:44px;color:var(--ink-3);font-size:.84rem}
+
+  @media (max-width:520px){
+    body{font-size:16px}
+    ol.steps > li{grid-template-columns:28px 1fr;gap:12px}
+  }
+</style>
+
+<div class="wrap">
+
+<header class="mast">
+  <div class="col">
+    <p class="eyebrow">Handoff &middot; 18 September 2026</p>
+    <h1>ACARS Receiver Migration</h1>
+    <p class="lede">Moving the ACARS/VDL2 receiver from the Raspberry&nbsp;Pi&nbsp;4 to the ASUS Chromebox CN62, and what four days of measurement established about which decoder to run once it's there.</p>
+  </div>
+  <div class="route">
+    <span><b>KFNL</b> 40.4519&deg;N 105.0113&deg;W</span>
+    <span class="arrow">&rarr;</span>
+    <span>Pi 4B <b>aarch64</b></span>
+    <span class="arrow">&rarr;</span>
+    <span>CN62 <b>x86_64</b></span>
+  </div>
+</header>
+
+<!-- ============ 1. STATE ============ -->
+<section>
+  <div class="sec-head col">
+    <p class="eyebrow">Where things stand</p>
+    <h2>The system as it runs today</h2>
+    <p>Everything below is live on the Pi at the time of writing. The repository is clean at <code>26e0091</code> &mdash; none of the investigation work is committed, and none of it lives inside the repo.</p>
+  </div>
+
+  <div class="grid">
+    <div class="card"><span class="lbl">Repo</span><span class="val">/home/pi/ACARS</span></div>
+    <div class="card"><span class="lbl">Web UI</span><span class="val">0.0.0.0:8686</span></div>
+    <div class="card"><span class="lbl">ACARS ingest</span><span class="val">UDP 127.0.0.1:5550</span></div>
+    <div class="card"><span class="lbl">VDL2 ingest</span><span class="val">UDP 127.0.0.1:5555</span></div>
+  </div>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Component</th><th>Version / detail</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td class="k">acarsdec</td><td class="num">0b7ba27</td><td>f00b4r0 fork, ~10 days past v4.6. <strong>Unpinned</strong> &mdash; <code>install.sh:57</code> clones <code>master</code>.</td></tr>
+        <tr><td class="k">dumpvdl2</td><td class="num">2.7.0</td><td>szpajder, GPL-3.0</td></tr>
+        <tr><td class="k">libacars</td><td class="num">2.2.1</td><td>MIT</td></tr>
+        <tr><td class="k">xng</td><td class="num">0.21.0</td><td>Candidate replacement. Apache-2.0 / MIT.</td></tr>
+        <tr><td class="k">aiohttp</td><td class="num">3.11.16</td><td>Web app only dependency of note</td></tr>
+        <tr><td class="k">OS</td><td class="num">Debian 13 trixie</td><td>kernel 6.18.39+rpt-rpi-v8</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Radio</th><th>Serial</th><th>Role</th><th>Gain / ppm</th></tr></thead>
+      <tbody>
+        <tr><td class="k">RTL2838UHIDIR</td><td class="num">ACARS1</td><td>ACARS, 5 channels 129.125&ndash;131.550&nbsp;MHz</td><td class="num">40 dB / +2 ppm</td></tr>
+        <tr><td class="k">RTL2838UHIDIR</td><td class="num">VDL2_1</td><td>VDL2, 7 channels 136.650&ndash;136.975&nbsp;MHz</td><td class="num">40 dB / +34 ppm</td></tr>
+        <tr><td class="k">SDRplay RSP1A</td><td class="num">22400AB399</td><td>rtl_airband ATC streams &mdash; <strong>not</strong> in the ACARS path</td><td class="num">&mdash;</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="col note key"><strong>Three systemd units</strong>, all enabled and active: <code>acars-decoder@acars</code>, <code>acars-decoder@vdl2</code>, <code>acars-web</code>. The decoder unit is templated and reads everything from <code>config.json</code> via <code>receiver.py</code>.</p>
+</section>
+
+<!-- ============ 2. WHY ============ -->
+<section>
+  <div class="sec-head col">
+    <p class="eyebrow">The finding that drives the move</p>
+    <h2>xng is better and slower, and the slowness is single-threaded</h2>
+    <p>The original goal was independence from GPL-2.0 acarsdec. Every other VHF ACARS decoder on GitHub turned out to be acarsdec lineage, so the only real candidate is <strong>xng</strong> &mdash; which also replaces GPL-3.0 dumpvdl2, ships an arm64/amd64 <code>.deb</code>, and emits acarsdec-compatible JSON that <code>web/server.py</code> already parses.</p>
+    <p>It decodes measurably more. It also costs roughly eight times the CPU, and it cannot spread that cost across cores.</p>
+  </div>
+
+  <div class="chart">
+    <svg viewBox="0 0 720 300" role="img" aria-label="CPU cost of each decoder configuration against the single-thread ceiling. acarsdec 5 channels uses 10.8 percent of one core; xng 2 channels 24.3 percent; xng 3 channels 45.4 percent; xng 5 channels saturates at 100 percent and fails; xng 5 channels on the CN62 is estimated near 30 percent.">
+      <!-- ceiling zone -->
+      <rect x="626" y="26" width="10" height="196" fill="var(--red-soft)"/>
+      <line x1="626" y1="20" x2="626" y2="228" stroke="var(--red)" stroke-width="1.5" stroke-dasharray="4 3"/>
+      <text x="622" y="16" text-anchor="end" font-family="Archivo, sans-serif" font-size="11" font-weight="600" fill="var(--red)">single-thread ceiling</text>
+
+      <!-- rows -->
+      <g font-family="IBM Plex Mono, monospace" font-size="11.5" fill="var(--ink-2)">
+        <text x="182" y="44" text-anchor="end">acarsdec &middot; 5 ch</text>
+        <text x="182" y="82" text-anchor="end">xng &middot; 2 ch</text>
+        <text x="182" y="120" text-anchor="end">xng &middot; 3 ch</text>
+        <text x="182" y="158" text-anchor="end">xng &middot; 5 ch</text>
+        <text x="182" y="208" text-anchor="end">xng &middot; 5 ch (CN62)</text>
+      </g>
+      <g font-family="IBM Plex Mono, monospace" font-size="9.5" fill="var(--ink-3)">
+        <text x="182" y="57" text-anchor="end">2.484 MS/s</text>
+        <text x="182" y="95" text-anchor="end">0.960 MS/s</text>
+        <text x="182" y="133" text-anchor="end">1.248 MS/s</text>
+        <text x="182" y="171" text-anchor="end">2.496 MS/s</text>
+        <text x="182" y="221" text-anchor="end">projected</text>
+      </g>
+
+      <rect x="190" y="32" width="47" height="19" fill="var(--blue)"/>
+      <rect x="190" y="70" width="106" height="19" fill="var(--magenta)" opacity=".55"/>
+      <rect x="190" y="108" width="198" height="19" fill="var(--magenta)"/>
+      <rect x="190" y="146" width="436" height="19" fill="var(--red)" opacity=".75"/>
+      <rect x="190" y="196" width="131" height="19" fill="none" stroke="var(--amber)" stroke-width="1.5" stroke-dasharray="5 3"/>
+
+      <g font-family="IBM Plex Mono, monospace" font-size="11.5" font-weight="500" fill="var(--ink)">
+        <text x="245" y="46">10.8%</text>
+        <text x="304" y="84">24.3%</text>
+        <text x="396" y="122">45.4%</text>
+        <text x="329" y="210">~30%</text>
+      </g>
+      <text x="634" y="160" font-family="Archivo, sans-serif" font-size="10.5" font-weight="600" fill="var(--red)">100% &mdash; fails</text>
+
+      <!-- axis -->
+      <line x1="190" y1="236" x2="636" y2="236" stroke="var(--rule-2)" stroke-width="1"/>
+      <g font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--ink-3)" text-anchor="middle">
+        <text x="190" y="252">0</text>
+        <text x="299" y="252">25</text>
+        <text x="408" y="252">50</text>
+        <text x="517" y="252">75</text>
+        <text x="626" y="252">100</text>
+      </g>
+      <text x="408" y="272" text-anchor="middle" font-family="Archivo, sans-serif" font-size="10.5" font-weight="600" fill="var(--ink-3)" letter-spacing="0.08em">PERCENT OF ONE CORE</text>
+      <text x="408" y="291" text-anchor="middle" font-family="Source Sans 3, sans-serif" font-size="11" fill="var(--ink-3)">Measured on the Pi 4 (Cortex-A72 @ 1.5 GHz) except where marked projected</text>
+    </svg>
+  </div>
+  <p class="cap col">At 5 channels xng pins one core and drops samples &mdash; 67 <code>stream read: Overflow</code> events in 180 seconds. That was measured with the machine <em>quiet</em>: load 3.0, roughly 250% of the CPU idle. Per-thread sampling found <strong>97.9% on a single <code>tokio-rt-worker</code></strong> out of nine threads. More cores cannot help; only a faster core can.</p>
+
+  <div class="col stack">
+    <h3>Decode quality: a four-hour alternating A/B</h3>
+    <p>Both decoders ran healthy at 960 kS/s on two channels, alternating 20-minute blocks so traffic variation averaged out. Zero overflows on either side.</p>
+  </div>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Over 2 h each</th><th>acarsdec</th><th>xng</th><th>Delta</th></tr></thead>
+      <tbody>
+        <tr><td>Clean messages</td><td class="num">829</td><td class="num">1285</td><td class="num" style="color:var(--green)">+55%</td></tr>
+        <tr><td>Distinct aircraft</td><td class="num">92</td><td class="num">117</td><td class="num" style="color:var(--green)">+27%</td></tr>
+        <tr><td>CPU, one core</td><td class="num">3.0%</td><td class="num">24.3%</td><td class="num" style="color:var(--red)">8.1&times;</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="cap col">xng led in 5 of 6 cycles; median ratio 1.58, geometric mean 1.70, range 0.64&ndash;4.08. Junk is negligible: 31 CRC-bad plus 4 malformed tails out of 1320 raw. Treat <strong>+55% as the centre of a range</strong> &mdash; dropping the single outlier cycle still leaves +25%.</p>
+
+  <p class="col note key"><strong>xng filters its own bad frames before UDP.</strong> Over a 4 h 25 m soak, 127 of 3462 messages (3.7%) were CRC-bad; they reach the JSONL but not the UDP output. At the matched sample point the log held 3230 CRC-ok and UDP had delivered 3229. <code>web/server.py</code> needs no filtering change.</p>
+</section>
+
+<!-- ============ 3. TARGET ============ -->
+<section>
+  <div class="sec-head col">
+    <p class="eyebrow">Target hardware</p>
+    <h2>ASUS Chromebox CN62</h2>
+    <p>The i7-5500U is Broadwell: 2 cores / 4 threads, 2.4&nbsp;GHz base and 3.0&nbsp;GHz turbo, with <strong>AVX2 and FMA3</strong> &mdash; 256-bit SIMD against the A72's 128-bit NEON. Single-thread throughput is the axis that matters here, and it should be roughly 3&ndash;4&times; the Pi's, putting xng's full 5-channel load near 30% of one core.</p>
+  </div>
+
+  <div class="col stack">
+    <p class="note stop"><strong>Firmware flash is required and semi-permanent.</strong> It's a Chromebox: open the case, remove the write-protect screw (pre-CR50, the screw completes a ground) and flash <a href="https://mrchromebox.tech">MrChromebox</a> UEFI. Leave the screw out. Known trap &mdash; Ubuntu often fails to install the grub EFI shim to the default boot target and you land in an EFI shell; MrChromebox's FAQ covers the fix.</p>
+
+    <p class="note warn"><strong>USB 3.0 RFI is the real SDR risk.</strong> All four ports are USB 3.0; there are none at USB 2.0. USB 3 radiates broadband noise across the VHF range you're listening to. Plan on a powered USB 2.0 hub, shielded cables and ferrites, with the dongles physically away from the chassis. Verify noise floor against the Pi's current figures before declaring the migration good &mdash; see step 8.</p>
+
+    <p class="note warn"><strong>Stock config is thin.</strong> 4&nbsp;GB RAM is ample (the Pi runs the whole stack in ~1&nbsp;GB) but the 16&nbsp;GB SSD is not. Budget an M.2 swap and check the slot type before buying &mdash; this generation is M.2 SATA, not NVMe. The box is also 2015 hardware; fan, capacitors and SSD have eleven years on them.</p>
+
+    <p>One upside worth noting: SDRplay's API v3 is better supported on x86_64 than ARM, so the RSP1A should behave better for rtl_airband than it does today.</p>
+  </div>
+</section>
+
+<!-- ============ 4. PROCEDURE ============ -->
+<section>
+  <div class="sec-head col">
+    <p class="eyebrow">Migration</p>
+    <h2>Procedure</h2>
+    <p>These are ordered because the order matters &mdash; firmware before OS, OS before radios, radios verified before any decoder decision.</p>
+  </div>
+
+  <ol class="steps">
+    <li>
+      <span class="step-n">01</span>
+      <div class="step-b">
+        <h3>Flash firmware, install Ubuntu</h3>
+        <p>Write-protect screw out, MrChromebox UEFI full-ROM, then Ubuntu Server x86_64. Server, not Desktop &mdash; the Pi runs headless at <code>multi-user.target</code> with no X or Wayland at all, and there's no reason to change that.</p>
+      </div>
+    </li>
+    <li>
+      <span class="step-n">02</span>
+      <div class="step-b">
+        <h3>Get the files across</h3>
+        <p>A plain <code>git clone</code> gets the code but not <code>config.json</code> (gitignored), the trial harness, or the project notes. This tarball carries all three &mdash; 5.3&nbsp;MB against the 91&nbsp;MB a naive <code>tar ACARS/ acars-trial/</code> would produce.</p>
+<pre><span class="c"># run from /home/pi, not from inside the repo</span>
+tar -czf acars-handoff.tar.gz \
+  -C /home/pi <span class="hl">--exclude='ACARS/third_party'</span> <span class="hl">--exclude='acars-trial/xng'</span> \
+  ACARS acars-trial \
+  -C /home/pi/.claude/projects/-home-pi-ACARS memory</pre>
+        <p class="note stop"><strong>Excluding <code>third_party/</code> is not just about size.</strong> <code>install.sh</code>'s <code>build()</code> skips a component when <code>third_party/&lt;name&gt;/&lt;binary&gt;</code> is already executable. Carry the aarch64 build artifacts over and the installer prints &ldquo;already built&rdquo; and skips every rebuild &mdash; leaving you with ARM binaries on an x86_64 box. The same applies to <code>acars-trial/xng</code>, which is an aarch64 build; get the amd64 <code>.deb</code> from the release page instead.</p>
+      </div>
+    </li>
+    <li>
+      <span class="step-n">03</span>
+      <div class="step-b">
+        <h3>Run the installer</h3>
+        <p><code>install.sh</code> is architecture-agnostic as written. Every apt package it names exists on Ubuntu x86_64, and it derives the librtlsdr path at install time rather than hardcoding it.</p>
+<pre>cd ~/ACARS
+./install.sh</pre>
+        <p class="note">It installs packages, blacklists the DVB-T driver, builds libacars + acarsdec + dumpvdl2 into <code>third_party/</code>, writes <code>config.json</code> from the example, and installs the three systemd units &mdash; substituting <code>@USER@</code> and <code>@PROJECT_DIR@</code> into them at <code>install.sh:84</code>, which is why the repo copies differ from what ends up in <code>/etc/systemd/system/</code>.</p>
+      </div>
+    </li>
+    <li>
+      <span class="step-n">04</span>
+      <div class="step-b">
+        <h3>Pin the acarsdec revision</h3>
+        <p>Do this while you're in the installer anyway. <code>install.sh:57</code> clones <code>master</code> with <code>--depth 1</code> and no ref, so two installs a week apart get different code with no record of what worked. The Pi is currently on <code>0b7ba27</code>.</p>
+        <p class="note warn">A side effect of <code>--depth 1</code>: no tags are fetched, so acarsdec's own <code>git describe</code> falls back to a bare hash and it self-reports as <code>Acarsdec 0b7ba27</code> rather than a version.</p>
+      </div>
+    </li>
+    <li>
+      <span class="step-n">05</span>
+      <div class="step-b">
+        <h3>Move the dongles and confirm serials</h3>
+        <p>The serials are what <code>config.json</code> addresses, so nothing needs renaming if the dongles move physically intact.</p>
+<pre>rtl_test -t
+<span class="c">#  0:  Realtek, RTL2838UHIDIR, SN: ACARS1</span>
+<span class="c">#  1:  Realtek, RTL2838UHIDIR, SN: VDL2_1</span></pre>
+      </div>
+    </li>
+    <li>
+      <span class="step-n">06</span>
+      <div class="step-b">
+        <h3>Port config.json</h3>
+        <p>Copy the Pi's <code>config.json</code> across, then change exactly one thing &mdash; the preload path is the only architecture-specific value in it.</p>
+<pre><span class="c">// aarch64 (Pi)</span>
+"librtlsdr_preload": "/usr/lib/<span class="hl">aarch64</span>-linux-gnu/librtlsdr.so.0"
+
+<span class="c">// x86_64 (CN62)</span>
+"librtlsdr_preload": "/usr/lib/<span class="hl">x86_64</span>-linux-gnu/librtlsdr.so.0"</pre>
+        <p>A fresh <code>install.sh</code> run derives this correctly on its own; you only edit it if you copied the file over. Everything else carries unchanged: home coordinates, the two receiver blocks, ports, <code>history_hours: 8</code>, health thresholds, and the VRS URL at <code>192.168.4.225:6535</code> &mdash; confirm that host is reachable from the new box's network position.</p>
+      </div>
+    </li>
+    <li>
+      <span class="step-n">07</span>
+      <div class="step-b">
+        <h3>Bring up acarsdec first, unchanged</h3>
+        <p>Establish a known-good baseline on the new hardware before introducing xng. Same decoder, same 5 channels, same gains.</p>
+<pre>sudo systemctl enable --now acars-decoder@acars acars-decoder@vdl2 acars-web
+curl -s localhost:8686/api/stats</pre>
+      </div>
+    </li>
+    <li>
+      <span class="step-n">08</span>
+      <div class="step-b">
+        <h3>Compare the noise floor before anything else</h3>
+        <p>This is the step most likely to surface a problem, and the one easiest to skip. USB 3.0 RFI would show as a raised noise floor and reduced message rates that look like a decoder regression but aren't.</p>
+<pre>curl -s localhost:8686/api/stats/full | \
+  python3 -c "import json,sys;
+[print(x['freq'], x['frames'], x['avg_level'])
+ for x in json.load(sys.stdin)['traffic']['frequencies']]"</pre>
+        <p>Pi reference figures, daytime, per 2 h window:</p>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Channel</th><th>Frames / 2 h</th><th>Share</th><th>Avg level</th></tr></thead>
+            <tbody>
+              <tr><td class="k">130.450</td><td class="num">236</td><td class="num">78.4%</td><td class="num">&minus;27.2 dB</td></tr>
+              <tr><td class="k">130.025</td><td class="num">40</td><td class="num">13.3%</td><td class="num">&minus;37.6 dB</td></tr>
+              <tr><td class="k">131.125</td><td class="num">13</td><td class="num">4.3%</td><td class="num">&minus;36.9 dB</td></tr>
+              <tr><td class="k">131.550</td><td class="num">8</td><td class="num">2.7%</td><td class="num">&minus;39.8 dB</td></tr>
+              <tr><td class="k">129.125</td><td class="num">4</td><td class="num">1.3%</td><td class="num">&minus;46.0 dB</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="cap">Traffic is heavily concentrated: 130.450 alone carries about 78%, and the top three channels about 96%. That distribution held across both overnight and daytime samples.</p>
+      </div>
+    </li>
+    <li>
+      <span class="step-n">09</span>
+      <div class="step-b">
+        <h3>Then, and only then, trial xng at 5 channels</h3>
+        <p>Install the amd64 <code>.deb</code> from the <a href="https://github.com/airframesio/xng/releases">v0.21.0 release</a>. Stop the acarsdec unit first &mdash; the dongle is exclusive, and a systemd unit with <code>Restart=always</code> will fight you for it every 10 seconds.</p>
+<pre>sudo systemctl stop acars-decoder@acars
+xng listen --sdr driver=rtlsdr,serial=ACARS1 --mode acars \
+  -g 40 -r 2496000 -c 130.3375M \
+  --channels 129.125,130.025,130.450,131.125,131.550 \
+  --demod-effort live --udp 127.0.0.1:5550</pre>
+        <p>Watch for <code>stream read: Overflow</code> in stderr. If the CN62 estimate holds you'll see none, and CPU near 30% of one core. The harness in <code>/home/pi/acars-trial/</code> (see below) will run a proper soak if you want numbers rather than an impression.</p>
+      </div>
+    </li>
+  </ol>
+</section>
+
+<!-- ============ 5. DECISION ============ -->
+<section>
+  <div class="sec-head col">
+    <p class="eyebrow">The call to make once it's running</p>
+    <h2>Which decoder to keep</h2>
+  </div>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Option</th><th>Channels</th><th>CPU</th><th>Licensing</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>acarsdec</strong> &mdash; no change</td>
+          <td class="num">5 of 5</td><td class="num">10.8%</td>
+          <td>GPL-2.0 + GPL-3.0</td>
+          <td><span class="tag ok">proven</span></td>
+        </tr>
+        <tr>
+          <td><strong>xng</strong>, 3 channels</td>
+          <td class="num">3 of 5 &mdash; 96% of traffic</td><td class="num">45.4%</td>
+          <td>Apache-2.0 / MIT</td>
+          <td><span class="tag ok">soaked 4 h 25 m</span></td>
+        </tr>
+        <tr>
+          <td><strong>xng</strong>, 5 channels</td>
+          <td class="num">5 of 5</td><td class="num">~30% <span class="tag est">est</span></td>
+          <td>Apache-2.0 / MIT</td>
+          <td><span class="tag no">unverified on CN62</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="col">The 3-channel option is the fallback that already works &mdash; validated on the Pi at 45.2&ndash;45.4% across 53 samples, zero overflows, RSS flat at 41&nbsp;MB. Four channels would need ~1.58 MS/s, extrapolating to ~77% of the single worker thread, which is too close to the overflow threshold to trust without its own soak.</p>
+  <p class="col note key">If 5-channel xng holds on the CN62, it is strictly better than today: <strong>~55% more messages, full channel coverage, and permissive licensing for the whole receiver</strong> &mdash; replacing both acarsdec and dumpvdl2 with one binary.</p>
+</section>
+
+<!-- ============ 6. TRAPS ============ -->
+<section>
+  <div class="sec-head col">
+    <p class="eyebrow">Things that cost me hours</p>
+    <h2>Traps worth knowing before you hit them</h2>
+  </div>
+  <ul class="plain col">
+    <li><strong>acarsdec rewrites its own argv.</strong> It tokenizes <code>--output json:udp:host=…,port=…</code> destructively with NULs, so <code>ps</code> and <code>/proc/pid/cmdline</code> show six separate arguments. This looks exactly like a bug in <code>receiver.py</code> and is not one. It also means <code>pkill -f</code> patterns built from the original argument string never match.</li>
+    <li><strong><code>pkill -f</code> matches your own shell.</strong> It bit me twice &mdash; once killing the shell running the kill, once killing a cleanup script's parent. Any pattern you pass appears in your own command line. Match on something the target has and you don't, or resolve PIDs and check <code>/proc/pid/cmdline</code>.</li>
+    <li><strong><code>grep -c</code> exits 1 when the count is zero.</strong> So <code>$(grep -c x f || echo 0)</code> emits <em>two</em> zeros and quietly corrupts a CSV column.</li>
+    <li><strong><code>ps -eo pcpu</code> is a lifetime average, not current load.</strong> It reported a stuck process at 86% that was actually consuming 140%. Sample <code>/proc/pid/stat</code> deltas over a few seconds instead.</li>
+    <li><strong>SoapySDR ABI split.</strong> There are two installs on the Pi: <code>/usr/local</code> (ABI 0.8-3, airspy + sdrplay) and the distro's (ABI 0.8, rtlsdr + miri). xng links the distro one, so <code>driver=sdrplay</code> fails an ABI check and <code>driver=miri</code> segfaults at 2.5 MS/s. The RSP1A is effectively unusable with xng &mdash; moot, since it isn't in the ACARS path.</li>
+    <li><strong>xng has no ppm correction for RTL-SDR.</strong> <code>--max-ppm</code> is VDL2-only. The ACARS dongle runs <code>-p 2</code>; at 131 MHz that's a 262 Hz offset, negligible for AM/MSK envelope detection, but there's no flag to match it.</li>
+    <li><strong>RTL-SDR has a sample-rate gap</strong> between 300 kHz and 900 kHz. And for xng the rate must be an integer multiple of the mode's channel rate &mdash; 24 kHz for ACARS &mdash; where acarsdec wants a multiple of 12 kHz.</li>
+  </ul>
+</section>
+
+<!-- ============ 7. LOOSE ENDS ============ -->
+<section>
+  <div class="sec-head col">
+    <p class="eyebrow">Not done</p>
+    <h2>Open items</h2>
+  </div>
+  <ul class="plain col">
+    <li><strong>rtl_airband is down.</strong> Killed during CPU investigation and never restarted. It has <em>no systemd unit</em> &mdash; it was started by hand, so it will not come back on reboot. It used the RSP1A for ATC streams. If you want it on the new box, write it a unit this time.</li>
+    <li><strong>None of this work is committed.</strong> The repo is clean at <code>26e0091</code>; the entire investigation lives in <code>/home/pi/acars-trial/</code>, which is outside the repo and <strong>will not transfer with a git clone</strong>. Copy it manually if you want the harness.</li>
+    <li><strong>xng's UDP output is unverified against the live web app.</strong> The CRC finding says it should be clean, but the end-to-end path &mdash; xng to <code>web/server.py</code> to the browser &mdash; has never run for more than a soak's duration.</li>
+    <li><strong>The +55% figure comes from two channels only</strong> (130.025 and 130.450). 131.125 is weaker at &minus;36.9 dB and its sensitivity advantage there is assumed, not measured.</li>
+  </ul>
+
+  <div class="col stack">
+    <h3>Harness in /home/pi/acars-trial/</h3>
+    <p>Worth copying across. All of it stops the production unit for its duration and restarts it on exit, including on Ctrl-C.</p>
+  </div>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td class="k">trial.sh</td><td>Alternating A/B, two decoders in equal blocks; both feed UDP 5550 so the web display keeps working</td></tr>
+        <tr><td class="k">analyze.py</td><td>Scores a trial &mdash; msgs/min, unique, CPU%</td></tr>
+        <tr><td class="k">soak.sh</td><td>Long single-decoder soak; samples CPU, overflows, RSS, load every 5 min</td></tr>
+        <tr><td class="k">soak_report.py</td><td>Summarises a soak and runs the CRC comparison</td></tr>
+        <tr><td class="k">udp_count.py</td><td>Counts what actually arrives over UDP, for the CRC question</td></tr>
+        <tr><td class="k">stop.sh / stop_soak.sh</td><td>Abort and restore production. Both were bitten by the <code>pkill</code> trap above; the fixed versions exclude themselves</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<footer class="col">
+  <p>Prepared on the Pi 4 at KFNL, 18 September 2026. Measurements are from that machine unless marked projected. The single-thread ceiling is the load-bearing finding &mdash; if the CN62 clears it at 5 channels, everything else follows.</p>
+</footer>
+
+</div>
