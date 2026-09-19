@@ -32,13 +32,25 @@ else
 fi
 
 mkdir -p third_party
-build() {  # build <name> <git url> <binary to check>
-  local name=$1 url=$2 binary=$3
+# acarsdec has no releases; pin the revision so two installs a week apart build the same code.
+ACARSDEC_REF=0b7ba27
+
+build() {  # build <name> <git url> <binary to check> [git ref]
+  local name=$1 url=$2 binary=$3 ref=${4:-}
   if [[ -x "third_party/$name/$binary" ]]; then
     echo "$name already built."
     return
   fi
-  [[ -d "third_party/$name" ]] || git clone --depth 1 "$url" "third_party/$name"
+  if [[ ! -d "third_party/$name" ]]; then
+    if [[ -n "$ref" ]]; then
+      # Full clone: a shallow one can't check out an arbitrary ref, and fetches no
+      # tags, which makes the build self-report a bare hash instead of a version.
+      git clone "$url" "third_party/$name"
+      git -C "third_party/$name" checkout --detach "$ref"
+    else
+      git clone --depth 1 "$url" "third_party/$name"
+    fi
+  fi
   rm -rf "third_party/$name/build"
   cmake -S "third_party/$name" -B "third_party/$name/build" -DCMAKE_BUILD_TYPE=Release
   cmake --build "third_party/$name/build" -j"$(nproc)"
@@ -54,7 +66,7 @@ else
 fi
 
 step "Building acarsdec"
-build acarsdec https://github.com/f00b4r0/acarsdec.git build/acarsdec
+build acarsdec https://github.com/f00b4r0/acarsdec.git build/acarsdec "$ACARSDEC_REF"
 
 step "Building dumpvdl2"
 build dumpvdl2 https://github.com/szpajder/dumpvdl2.git build/src/dumpvdl2
