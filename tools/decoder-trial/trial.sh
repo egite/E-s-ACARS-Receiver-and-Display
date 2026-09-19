@@ -19,8 +19,12 @@ mkdir -p "$RUN"
 LOGS=$RUN/logs; mkdir -p "$LOGS"
 XNG=${XNG:-$RUN/xng}
 ACARSDEC=${ACARSDEC:-$REPO/third_party/acarsdec/build/acarsdec}
-# Distro librtlsdr detaches the DVB driver on its own; resolve per-architecture.
-PRELOAD=${PRELOAD:-$(ldconfig -p | awk '/librtlsdr\.so\.0 / && $NF !~ /\/usr\/local\// {print $NF; exit}')}
+# Mirror receiver.py: take librtlsdr_preload from config.json and only apply it if it
+# exists. It is a workaround for a /usr/local librtlsdr that fails to detach the DVB
+# driver; where there is no such build (and on distros shipping librtlsdr.so.2) it is
+# empty, and LD_PRELOAD= is a harmless no-op.
+PRELOAD=${PRELOAD:-$(python3 -c "import json;print(json.load(open('$REPO/config.json')).get('librtlsdr_preload') or '')" 2>/dev/null)}
+[[ -n ${PRELOAD:-} && -e ${PRELOAD:-} ]] || PRELOAD=
 
 BLOCK_SECS=${BLOCK_SECS:-1200}     # 20 minutes per block
 CYCLES=${CYCLES:-6}                # 6 cycles => 4 h total, 2 h per decoder
