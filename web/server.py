@@ -629,7 +629,17 @@ class ACARSWeb:
     def ingest(self, source, payload):
         try:
             raw = json.loads(payload)
-            msg = normalize_acars(raw, self.cfg) if source == "ACARS" else normalize_vdl2(raw, self.cfg)
+            # Pick the normalizer by payload shape, not by which port it arrived on.
+            # dumpvdl2 nests everything under "vdl2"; acarsdec sends a flat object - and so
+            # does xng in *any* mode, since its --udp output is acarsdec-compatible. Keying
+            # off the port alone would silently yield empty messages the moment a receiver
+            # is switched to xng via receivers.<name>.decoder.
+            if isinstance(raw, dict) and "vdl2" in raw:
+                msg = normalize_vdl2(raw, self.cfg)
+            else:
+                msg = normalize_acars(raw, self.cfg)
+            if msg is not None:
+                msg["source"] = source  # the port decides the label, so xng-on-VDL2 counts as VDL2
         except (ValueError, KeyError, TypeError) as exc:
             log.warning("bad %s datagram: %s", source, exc)
             return

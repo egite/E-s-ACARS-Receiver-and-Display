@@ -4,7 +4,7 @@ A self-hosted ACARS and VDL Mode 2 receiver for a Raspberry Pi (or any Debian ma
 dongles. It decodes aircraft datalink messages, translates them into plain English, and shows them on a
 live web page: a map, flight cards with message timelines, a raw feed, and a receiver health / stats page.
 
-- **Two receivers at once**: classic VHF ACARS (acarsdec) and VDL2 (dumpvdl2), one dongle each.
+- **Two receivers at once**: classic VHF ACARS (acarsdec) and VDL2 (dumpvdl2), one dongle each — or [xng](https://github.com/airframesio/xng) for either, chosen in `config.json`.
 - **Plain-English translations** of CPDLC, position reports, flight-computer messages, OOOI events,
   weather observations, maintenance alerts, crew/dispatch text and more. Multi-block reports are
   reassembled. Formats that aren't publicly documented (e.g. engine parameters) are named, not guessed.
@@ -92,7 +92,9 @@ for 30 minutes updates `config.json` and restarts the VDL2 decoder automatically
 | Key | Meaning |
 |---|---|
 | `home.lat`, `home.lon`, `home.name` | Receiver location (map centre, and the sanity limit for positions parsed from messages) |
-| `receivers.acars` / `receivers.vdl2` | `enabled`, `device` (serial or index), `gain` (dB or `"auto"`), `ppm`, `frequencies` (MHz), `binary`, `log_file` (decoded text log, `null` = off) |
+| `receivers.acars` / `receivers.vdl2` | `enabled`, `decoder` (see below), `device` (serial or index), `gain` (dB or `"auto"`), `ppm`, `frequencies` (MHz), `binary`, `log_file` (decoded text log, `null` = off) |
+| `receivers.*.decoder` | Which decoder to run: ACARS takes `"acarsdec"` (default) or `"xng"`; VDL2 takes `"dumpvdl2"` (default) or `"xng"`. Set per receiver, so one can use xng while the other doesn't |
+| `receivers.*.xng_binary`, `.sample_rate`, `.demod_effort` | xng only: path to the binary (`null` = find `xng` on `PATH`), capture rate in Hz (`null` = derived from `frequencies`), and `"live"` or `"max"` demod effort |
 | `librtlsdr_preload` | Path to a librtlsdr that detaches the DVB driver itself; only needed if a self-built copy in `/usr/local` lacks that (the install script fills it in) |
 | `http_host`, `http_port` | Web server address (default `0.0.0.0:8686`) |
 | `acars_udp_port`, `vdl2_udp_port` | Local UDP ports the decoders send JSON to |
@@ -101,6 +103,25 @@ for 30 minutes updates `config.json` and restarts the VDL2 decoder automatically
 | `health.silence_minutes` | Alert when a receiver decodes nothing for this long (per receiver) |
 | `health.ppm_tolerance`, `health.auto_ppm` | Tuning-error warning threshold (ppm) and automatic correction on/off |
 | `max_position_km` | Ignore positions parsed from messages that are farther than this from `home` |
+
+**Choosing a decoder.** `acarsdec` and `dumpvdl2` are the defaults and need no extra setup — `install.sh`
+builds them. [xng](https://github.com/airframesio/xng) is an alternative that covers *both* modes in one
+permissively-licensed binary (Apache-2.0/MIT, against acarsdec's GPL-2.0 and dumpvdl2's GPL-3.0), and in
+testing here it decoded noticeably more than acarsdec on the same antenna. It is not built by `install.sh`;
+install the `.deb` from its releases page, then set `"decoder": "xng"` and restart that receiver.
+
+The trade is CPU. xng's per-mode pipeline is single-threaded, so what matters is single-core speed, not
+core count — extra cores do not help. Measured here: acarsdec runs 5 ACARS channels at about 11% of one
+core, where xng needs roughly 70% of one core on a 2015 i7-5500U, and saturates a Raspberry Pi 4 entirely.
+Check for `stream read: Overflow` in the decoder's log after switching; if you see it, the CPU can't keep
+up — drop a channel or go back to acarsdec.
+
+One xng caveat: `sample_rate` is derived automatically only for ACARS — for VDL2 you must set it
+explicitly, because xng's VDL2 channel rate isn't documented. `ppm` *is* honoured: xng has no RTL-SDR
+ppm option, so `receiver.py` pre-compensates by scaling the centre frequency and the channel list by
+`1/(1 + ppm/1e6)`, which lands the dongle on the true frequencies. (Scaling only the centre would leave
+every channel off by roughly `centre × ppm`; scaling both leaves an error of only `offset × ppm`, about
+2 Hz at the edge of a 2.4 MHz capture.)
 
 **Frequencies.** The defaults are the common US channels. ACARS channels must fit within ~2.4 MHz (one
 dongle's bandwidth); VDL2 channels within ~1 MHz. Europe uses different ACARS channels (e.g. 131.525,
@@ -162,7 +183,7 @@ EOF
 
 ```
 config.example.json    settings template (install.sh copies it to config.json, which git ignores)
-receiver.py            starts acarsdec / dumpvdl2 from config.json
+receiver.py            starts acarsdec / dumpvdl2 / xng from config.json
 install.sh             packages, builds, config, services
 systemd/               service templates (installed by install.sh)
 web/server.py          ingest, reassembly, aircraft tracking, VRS, WebSocket and APIs
@@ -183,6 +204,8 @@ This project stands on the work of others. Thank you to the authors and contribu
 - [acarsdec](https://github.com/f00b4r0/acarsdec) (GPL-2.0): VHF ACARS decoder, originally written by
   [Thierry Leconte](https://github.com/TLeconte/acarsdec) and maintained by Thibaut Varène (f00b4r0).
 - [dumpvdl2](https://github.com/szpajder/dumpvdl2) (GPL-3.0): VDL Mode 2 decoder, by Tomasz Lemiesz (szpajder).
+- [xng](https://github.com/airframesio/xng) (Apache-2.0 / MIT): optional multi-mode decoder covering both
+  ACARS and VDL2, by Airframes.io. Not installed by `install.sh`; selected with `receivers.*.decoder`.
 - [libacars](https://github.com/szpajder/libacars) (MIT): ACARS, CPDLC, ADS-C and MIAM parsing used by both
   decoders, also by Tomasz Lemiesz.
 - [rtl-sdr / librtlsdr](https://osmocom.org/projects/rtl-sdr/wiki) (GPL-2.0), from Osmocom: the dongle

@@ -4,20 +4,28 @@
   "receivers": {
     "acars": {
       "enabled": true,
+      "decoder": "acarsdec",
       "device": "ACARS1",
       "gain": 40,
       "ppm": 0,
       "frequencies": [129.125, 130.025, 130.450, 131.125, 131.550],
       "binary": "third_party/acarsdec/build/acarsdec",
+      "xng_binary": null,
+      "sample_rate": null,
+      "demod_effort": "live",
       "log_file": null
     },
     "vdl2": {
       "enabled": true,
+      "decoder": "dumpvdl2",
       "device": "VDL2_1",
       "gain": 40,
       "ppm": 0,
       "frequencies": [136.650, 136.700, 136.725, 136.775, 136.800, 136.875, 136.975],
       "binary": "third_party/dumpvdl2/build/src/dumpvdl2",
+      "xng_binary": null,
+      "sample_rate": null,
+      "demod_effort": "live",
       "log_file": null
     }
   },
