@@ -197,13 +197,26 @@ class HealthMonitor:
         new = round(old - residual)
         if not self.write_ppm("vdl2", new):
             return
+        # The decoder only reads config.json at startup, so the new value has to be on
+        # disk before the restart. If the restart then fails, the running decoder is still
+        # on the old value and the file would be a lie - so put it back. Without this the
+        # correction is rewritten every cooldown and config.json ratchets away from the
+        # value actually in use (seen on a host where passwordless sudo wasn't available).
         proc = await asyncio.create_subprocess_exec("sudo", "-n", "systemctl", "restart", "acars-decoder@vdl2.service",
                                                     stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
         _, err = await proc.communicate()
         ok = proc.returncode == 0
-        self.events.append({"ts": now, "kind": "auto_ppm", "text": f"VDL2 ppm changed {old} → {new}" +
-                            ("" if ok else f" (restart failed: {err.decode().strip()[:80]}; restart the decoder manually)")})
-        log.warning("auto ppm: VDL2 %s -> %s (restart %s)", old, new, "ok" if ok else "failed")
+        if not ok:
+            reason = err.decode().strip()[:80]
+            self.write_ppm("vdl2", old)
+            self.events.append({"ts": now, "kind": "auto_ppm",
+                                "text": f"VDL2 ppm still {old}; wanted {new} but the restart failed "
+                                        f"({reason}) - restart the decoder manually"})
+            log.warning("auto ppm: VDL2 %s -> %s reverted (restart failed: %s)", old, new, reason)
+            rx.drift_since = None
+            return
+        self.events.append({"ts": now, "kind": "auto_ppm", "text": f"VDL2 ppm changed {old} → {new}"})
+        log.warning("auto ppm: VDL2 %s -> %s (restart ok)", old, new)
         rx.skew.clear()
         rx.drift_since = None
 

@@ -123,6 +123,24 @@ ppm option, so `receiver.py` pre-compensates by scaling the centre frequency and
 every channel off by roughly `centre × ppm`; scaling both leaves an error of only `offset × ppm`, about
 2 Hz at the edge of a 2.4 MHz capture.)
 
+**Measuring tuning error (`tools/calibrate_ppm.py`).** Only dumpvdl2 reports frequency error, because
+VDL2's D8PSK demodulator has to estimate the carrier offset to work at all. ACARS is MSK over AM and is
+recovered by envelope detection, which never needs the carrier frequency — so no ACARS decoder can tell
+you how far off the dongle is, and the Stats page shows ppm monitoring only for VDL2. To measure the
+ACARS dongle, this tool borrows it briefly and points dumpvdl2 at the VDL2 band:
+
+```bash
+tools/calibrate_ppm.py                  # measure the ACARS dongle, report only
+tools/calibrate_ppm.py --apply          # also write config.json and restart the receiver
+tools/calibrate_ppm.py --secs 600       # listen longer when traffic is thin
+```
+
+It stops that receiver for the duration and restarts it on exit, including on Ctrl-C. It needs
+`PPM_MIN_SAMPLES` (60) frames above 10 dB SNR, so run it when VDL2 traffic is healthy — overnight it can
+take ten minutes or more to gather enough, and it tells you the rate it saw if it falls short. ACARS
+tolerates far more tuning error than VDL2 (2 ppm is 262 Hz at 131 MHz, against 25 kHz channel spacing),
+so this is a periodic check rather than something that needs watching.
+
 **Frequencies.** The defaults are the common US channels. ACARS channels must fit within ~2.4 MHz (one
 dongle's bandwidth); VDL2 channels within ~1 MHz. Europe uses different ACARS channels (e.g. 131.525,
 131.725, 131.825) and mostly VDL2 136.975 plus local channels. The Stats page shows traffic per frequency.
@@ -190,6 +208,7 @@ web/server.py          ingest, reassembly, aircraft tracking, VRS, WebSocket and
 web/translate.py       plain-English translation and message types
 web/monitor.py         receiver health, ground stations, weather observations, stats
 web/static/            the web pages
+tools/calibrate_ppm.py measure a dongle's tuning error using dumpvdl2
 tests/corpus.jsonl     real messages for translation testing
 screenshots/           images for this README
 third_party/           acarsdec, dumpvdl2, libacars (created by install.sh, not in git)
