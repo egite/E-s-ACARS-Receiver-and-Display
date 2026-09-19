@@ -193,6 +193,33 @@ EOF
 - **`usb_claim_interface error -6`** — the DVB-T driver holds the dongle. Reboot after installing (the
   blacklist), or set `librtlsdr_preload` to the distro librtlsdr.
 - **`[R82XX] PLL not locked!`** at startup — harmless.
+- **A decoder exits with status 127 and `error while loading shared libraries`** — `systemctl status
+  acars-decoder@vdl2` shows `activating (auto-restart)` and the unit loops. A distro upgrade has changed
+  a library's SONAME under binaries built against the old one: Ubuntu replacing `librtlsdr2`
+  (`librtlsdr.so.2`) with `librtlsdr0` 2.0.2 (`librtlsdr.so.0` — the newer package carries the *lower*
+  number), or `libxml2.so.2` with `libxml2.so.16`, does exactly this. Confirm with
+  `ldd third_party/dumpvdl2/build/src/dumpvdl2 | grep 'not found'`.
+
+  Re-running `install.sh` on its own does **not** fix it. It keeps existing builds, and a binary broken
+  this way still exists and is still executable; libacars is skipped whenever `pkg-config` finds it,
+  which it does even when the installed library can no longer load. Rebuild libacars first, since both
+  decoders link it:
+
+  ```bash
+  rm -rf third_party/libacars/build
+  cmake -S third_party/libacars -B third_party/libacars/build -DCMAKE_BUILD_TYPE=Release
+  cmake --build third_party/libacars/build -j"$(nproc)"
+  sudo cmake --install third_party/libacars/build && sudo ldconfig
+  ```
+
+  Then rebuild the decoders against it. Deleting their build directories is what makes `install.sh` do
+  the work, and its package step restores any `-dev` package the upgrade dropped:
+
+  ```bash
+  rm -rf third_party/acarsdec/build third_party/dumpvdl2/build
+  ./install.sh --no-services
+  ```
+
 - **VDL2 decodes very little** — almost always tuning error; see *Measure each dongle's frequency error*.
 - **No ground stations on the map** — they appear only when their occasional squitter broadcast is heard.
 - **Dropped samples / nothing decodes at higher sample rates** — USB bandwidth shared with other SDRs.
