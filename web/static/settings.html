@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ACARS · VDL2 Settings</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="stats-page">
+<header class="topbar">
+  <div class="brand">ACARS · VDL2 Settings</div>
+  <nav class="nav-links"><a href="/">Flights</a><a href="/stats">Stats</a><a href="/raw">Raw feed</a></nav>
+</header>
+
+<main class="stats-main settings-main">
+  <form id="form" novalidate>
+    <h2 class="section-title">Receivers <span class="muted">saving restarts a receiver whose settings changed</span></h2>
+    <section class="rx-grid" id="receivers"></section>
+
+    <h2 class="section-title">Location</h2>
+    <section class="rx-card form-grid">
+      <label class="field wide"><span>Name</span><input name="home.name" maxlength="60"></label>
+      <label class="field"><span>Latitude</span><input name="home.lat" inputmode="decimal"><small>decimal degrees, north +</small></label>
+      <label class="field"><span>Longitude</span><input name="home.lon" inputmode="decimal"><small>decimal degrees, east +</small></label>
+      <label class="field"><span>Ignore positions beyond</span><input name="max_position_km" inputmode="numeric"><small>km from here; filters misparsed positions</small></label>
+    </section>
+
+    <h2 class="section-title">Virtual Radar Server</h2>
+    <section class="rx-card form-grid">
+      <label class="field wide"><span>AircraftList.json URL</span><input name="vrs_url" type="url" placeholder="http://host:port/VirtualRadar/AircraftList.json"><small>leave empty to run without ADS-B</small></label>
+      <label class="field"><span>Feed</span><input name="vrs_feed" placeholder="default"><small>VRS feed id, if not the default</small></label>
+      <label class="field"><span>Poll every</span><input name="vrs_poll_secs" inputmode="numeric"><small>seconds</small></label>
+    </section>
+
+    <h2 class="section-title">History &amp; health</h2>
+    <section class="rx-card form-grid">
+      <label class="field"><span>Keep messages for</span><input name="history_hours" inputmode="decimal"><small>hours, in memory only; longer uses more RAM</small></label>
+      <label class="field"><span>ACARS silence alert</span><input name="health.silence_minutes.acars" inputmode="numeric"><small>minutes without a frame</small></label>
+      <label class="field"><span>VDL2 silence alert</span><input name="health.silence_minutes.vdl2" inputmode="numeric"><small>minutes without a frame</small></label>
+      <label class="field"><span>ppm tolerance</span><input name="health.ppm_tolerance" inputmode="decimal"><small>warn (and auto-correct) beyond this</small></label>
+      <label class="field check wide"><input type="checkbox" name="health.auto_ppm"><span>Auto-correct VDL2 ppm<small>after 30 min of steady drift; restarts the VDL2 decoder</small></span></label>
+    </section>
+
+    <p class="muted small">Ports, decoder binaries, sample rates and the librtlsdr preload are edited in <code id="config-path">config.json</code>.</p>
+  </form>
+</main>
+
+<div class="save-bar" id="save-bar">
+  <span id="status" class="muted" aria-live="polite">Loading…</span>
+  <button type="button" class="btn" id="revert" disabled>Revert</button>
+  <button type="button" class="btn primary" id="save" disabled>Save</button>
+</div>
+
+<script src="/static/common.js"></script>
+<script src="/static/settings.js"></script>
+</body>
+</html>

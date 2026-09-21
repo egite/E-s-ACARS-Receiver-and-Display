@@ -477,3 +477,34 @@ input[type=search] { width: 100%; }
   .toast-stack { bottom: calc(66px + env(safe-area-inset-bottom)); }
   .winds-control select { min-height: 32px; }
 }
+
+/* ---------- settings page */
+.settings-main { padding-bottom: 90px; }
+.section-title .muted { text-transform: none; letter-spacing: 0; font-size: 12px; margin-left: 6px; }
+.rx-card.form-grid { margin-top: 0; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 190px), 1fr)); gap: 12px 14px; margin-top: 10px; }
+.form-grid .field.wide { grid-column: 1 / -1; }
+.form-grid .field > span { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+.form-grid .field small { color: var(--muted); font-size: 11px; }
+.form-grid input:not([type=checkbox]), .form-grid select, .form-grid textarea {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+  padding: 7px 9px; font: inherit; width: 100%; min-width: 0;
+}
+.form-grid input:focus, .form-grid select:focus, .form-grid textarea:focus { outline: none; border-color: var(--accent); }
+.form-grid .invalid { border-color: var(--warn); }
+.form-grid .field-error { color: var(--warn) !important; }
+.field.check { flex-direction: row; align-items: flex-start; gap: 8px; cursor: pointer; }
+.field.check input { margin: 2px 0 0; accent-color: var(--accent); width: 16px; height: 16px; }
+.field.check > span { display: flex; flex-direction: column; gap: 2px; color: var(--text); font-size: 13px; text-transform: none; letter-spacing: 0; }
+.save-bar {
+  position: fixed; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); background: var(--panel); border-top: 1px solid var(--line);
+}
+.save-bar #status { margin-right: auto; min-width: 0; }
+.save-bar .btn { padding: 7px 16px; }
+.save-bar .btn:disabled { opacity: .45; cursor: default; }
+.status-ok { color: var(--ok); } .status-warn { color: var(--both); } .status-error { color: var(--warn); }
+@media (max-width: 700px) {
+  .form-grid input:not([type=checkbox]), .form-grid select, .form-grid textarea { min-height: 38px; font-size: 16px; }
+}
+.form-grid textarea { resize: vertical; font-family: inherit; line-height: 1.5; }

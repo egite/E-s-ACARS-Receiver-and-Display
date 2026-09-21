@@ -89,6 +89,11 @@ for 30 minutes updates `config.json` and restarts the VDL2 decoder automatically
 
 ## Configuration (`config.json`)
 
+Most of these can be changed on the **Settings** page (`/settings`). Saving checks the values the
+same way the decoders do at startup, writes `config.json`, and restarts only the receivers whose
+settings changed (this needs passwordless `sudo systemctl`, like auto-ppm). Ports, binaries, sample
+rates and the librtlsdr preload are edited in the file.
+
 | Key | Meaning |
 |---|---|
 | `home.lat`, `home.lon`, `home.name` | Receiver location (map centre, and the sanity limit for positions parsed from messages) |
@@ -235,6 +240,7 @@ web/server.py          ingest, reassembly, aircraft tracking, VRS, WebSocket and
 web/translate.py       plain-English translation and message types
 web/monitor.py         receiver health, ground stations, weather observations, stats
 web/airlines.py        airline names for flight-id prefixes (from web/airlines.json)
+web/settings.py        what the Settings page may change, validation, writing config.json
 web/static/            the web pages
 tools/calibrate_ppm.py measure a dongle's tuning error using dumpvdl2
 tools/update_airlines.py  rebuild web/airlines.json from Wikipedia's list of airline codes

@@ -204,12 +204,8 @@ class HealthMonitor:
         # on the old value and the file would be a lie - so put it back. Without this the
         # correction is rewritten every cooldown and config.json ratchets away from the
         # value actually in use (seen on a host where passwordless sudo wasn't available).
-        proc = await asyncio.create_subprocess_exec("sudo", "-n", "systemctl", "restart", "acars-decoder@vdl2.service",
-                                                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
-        _, err = await proc.communicate()
-        ok = proc.returncode == 0
+        ok, reason = await self.restart_decoder("vdl2")
         if not ok:
-            reason = err.decode().strip()[:80]
             self.write_ppm("vdl2", old)
             self.events.append({"ts": now, "kind": "auto_ppm",
                                 "text": f"VDL2 ppm still {old}; wanted {new} but the restart failed "
@@ -221,6 +217,15 @@ class HealthMonitor:
         log.warning("auto ppm: VDL2 %s -> %s (restart ok)", old, new)
         rx.skew.clear()
         rx.drift_since = None
+
+    async def restart_decoder(self, name):
+        """Restart a decoder so it rereads config.json. Returns (ok, reason if not)."""
+        if not self.has_systemctl:
+            return False, "systemctl not available"
+        proc = await asyncio.create_subprocess_exec("sudo", "-n", "systemctl", "restart", f"acars-decoder@{name}.service",
+                                                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+        _, err = await proc.communicate()
+        return proc.returncode == 0, err.decode().strip()[:80]
 
     def write_ppm(self, name, value):
         """Change receivers.<name>.ppm in config.json in place, keeping the file's layout."""

@@ -18,6 +18,7 @@ from pathlib import Path
 import aiohttp
 from aiohttp import web
 
+import settings
 from airlines import IATA_TO_ICAO
 from monitor import GroundStations, HealthMonitor, WeatherStore, process_memory_mb, stats_summary
 from translate import MESSAGE_TYPES, message_type, observations, parse_squitter, translate
@@ -743,6 +744,47 @@ class ACARSWeb:
             "ground_stations": self.stations.report(),
         })
 
+    async def get_settings(self, request):
+        cfg = json.loads(CONFIG_PATH.read_text())
+        return web.json_response({"settings": settings.editable(cfg), "config_path": str(CONFIG_PATH),
+                                  "can_restart": self.health.has_systemctl})
+
+    async def save_settings(self, request):
+        """Validate, write config.json, apply what the web server uses, restart changed decoders."""
+        try:
+            body = await request.json()
+        except ValueError:
+            return web.json_response({"error": "request body isn't JSON"}, status=400)
+        before = json.loads(CONFIG_PATH.read_text())  # the file, not self.cfg: auto-ppm may have moved on
+        try:
+            after = settings.merge(before, settings.validate(body, before))
+        except settings.Invalid as exc:
+            return web.json_response({"errors": exc.errors}, status=422)
+        if after == before:
+            return web.json_response({"saved": False, "restarted": [], "failed": {}})
+        settings.write(CONFIG_PATH, after)
+        log.info("settings saved from the web page")
+
+        vrs_changed = (before.get("vrs_url"), before.get("vrs_feed")) != (after.get("vrs_url"), after.get("vrs_feed"))
+        for key in ("home", "vrs_url", "vrs_feed", "vrs_poll_secs", "history_hours", "max_position_km"):
+            self.cfg[key] = after[key]
+        if vrs_changed:  # don't keep showing aircraft from the old feed
+            self.vrs.by_icao, self.vrs.by_reg, self.vrs.by_call = {}, {}, {}
+            self.vrs.ok, self.vrs.error = False, None
+        self.health.reload_config()  # receivers + health, and notes any ppm change
+
+        restarted, failed = [], {}
+        for name in settings.changed_receivers(before, after):
+            ok, reason = await self.health.restart_decoder(name)
+            if ok:
+                restarted.append(name)
+            else:
+                failed[name] = reason or "restart failed"
+                self.health.events.append({"ts": time.time(), "kind": "settings",
+                                           "text": f"{name.upper()} settings saved but the decoder didn't restart "
+                                                   f"({failed[name]}) - it's still on the old settings"})
+        return web.json_response({"saved": True, "restarted": restarted, "failed": failed})
+
     async def winds(self, request):
         minutes = min(max(int(request.query.get("minutes", 60)), 5), self.cfg["history_hours"] * 60)
         return web.json_response(self.weather.recent(minutes * 60))
@@ -816,6 +858,9 @@ class ACARSWeb:
         app.router.add_get("/api/stats/full", self.full_stats)
         app.router.add_get("/api/winds", self.winds)
         app.router.add_get("/api/ground-stations", self.ground_stations)
+        app.router.add_get("/api/settings", self.get_settings)
+        app.router.add_post("/api/settings", self.save_settings)
+        app.router.add_get("/settings", lambda r: web.FileResponse(HERE / "static" / "settings.html"))
         app.router.add_get("/stats", lambda r: web.FileResponse(HERE / "static" / "stats.html"))
         app.router.add_get("/", lambda r: web.FileResponse(HERE / "static" / "index.html"))
         app.router.add_get("/raw", lambda r: web.FileResponse(HERE / "static" / "raw.html"))
