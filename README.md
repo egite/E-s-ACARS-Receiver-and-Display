@@ -234,8 +234,10 @@ systemd/               service templates (installed by install.sh)
 web/server.py          ingest, reassembly, aircraft tracking, VRS, WebSocket and APIs
 web/translate.py       plain-English translation and message types
 web/monitor.py         receiver health, ground stations, weather observations, stats
+web/airlines.py        airline names for flight-id prefixes (from web/airlines.json)
 web/static/            the web pages
 tools/calibrate_ppm.py measure a dongle's tuning error using dumpvdl2
+tools/update_airlines.py  rebuild web/airlines.json from Wikipedia's list of airline codes
 tests/corpus.jsonl     real messages for translation testing
 screenshots/           images for this README
 third_party/           acarsdec, dumpvdl2, libacars (created by install.sh, not in git)

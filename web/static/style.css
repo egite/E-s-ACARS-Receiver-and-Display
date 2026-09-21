@@ -359,6 +359,7 @@ input[type=search] { width: 100%; }
 .alert.warn { border-color: #fbbf2466; } .alert.warn .alert-icon, .alert.warn .alert-level { color: var(--both); }
 .alert.error { border-color: #f8717166; } .alert.error .alert-icon, .alert.error .alert-level { color: var(--warn); }
 .alert.info .alert-icon, .alert.info .alert-level { color: var(--accent); }
+.alert.info .alert-level { white-space: nowrap; }
 
 .rx-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr)); gap: 12px; }
 .rx-card, .viz-card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-width: 0; }

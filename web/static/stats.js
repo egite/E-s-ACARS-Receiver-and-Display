@@ -40,7 +40,7 @@ function renderAlerts(health) {
     : `<div class="alert ok"><span class="alert-icon" aria-hidden="true">✓</span><span class="alert-level">All good</span>
        <span>Both receivers are running and decoding.</span></div>`) +
     events.map((e) => `<div class="alert info"><span class="alert-icon" aria-hidden="true">ℹ</span>
-      <span class="alert-level">${clock(e.ts, false)}</span><span>${esc(e.text)}</span></div>`).join("");
+      <span class="alert-level">${dateClock(e.ts)}</span><span>${esc(e.text)}</span></div>`).join("");
 }
 
 // ----------------------------------------------------------------- receivers

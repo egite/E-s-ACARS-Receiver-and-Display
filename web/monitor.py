@@ -9,6 +9,8 @@ import time
 from collections import Counter, deque
 from pathlib import Path
 
+from airlines import airline_name
+
 log = logging.getLogger("acarsweb")
 
 SOURCES = {"acars": "ACARS", "vdl2": "VDL2"}  # config receiver name -> message source
@@ -320,10 +322,9 @@ def stats_summary(store, tracker, cfg, now):
     operators = {}
     for a in tracker.aircraft.values():
         v = tracker.vrs.by_icao.get(a.get("icao") or "") or {}
-        if a.get("flight") and v.get("Op"):
-            operators.setdefault(a["flight"][:2], Counter())[v["Op"]] += 1
-    airline_rows = [{"code": code, "messages": n,
-                     "name": operators[code].most_common(1)[0][0] if code in operators else None}
+        if a.get("flight") and (v.get("OpIcao") or v.get("Op")):
+            operators.setdefault(a["flight"][:2], Counter())[(v.get("OpIcao") or None, v.get("Op"))] += 1
+    airline_rows = [{"code": code, "messages": n, "name": airline_name(code, operators.get(code))}
                     for code, n in airlines.most_common(15)]
     return {"bucket_secs": bucket_secs, "timeline": timeline, "frequencies": freq_rows,
             "airlines": airline_rows, "types": dict(types)}

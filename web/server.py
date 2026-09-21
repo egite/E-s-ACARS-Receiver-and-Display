@@ -18,6 +18,7 @@ from pathlib import Path
 import aiohttp
 from aiohttp import web
 
+from airlines import IATA_TO_ICAO
 from monitor import GroundStations, HealthMonitor, WeatherStore, process_memory_mb, stats_summary
 from translate import MESSAGE_TYPES, message_type, observations, parse_squitter, translate
 
@@ -29,19 +30,6 @@ LINK_LABELS = {"_d", "Q0", "SQ", "5V", "_\x7f"}
 REPEAT_WINDOW_SECS = 120
 VRS_STALE_SECS = 60  # forget the VRS aircraft list if polls have failed for this long
 RECENT_PER_TYPE = 3  # English timeline entries kept per message type for each flight card
-
-# IATA -> ICAO airline designators, used to turn ACARS flight ids (UA1220)
-# into ADS-B callsigns (UAL1220) for VRS matching.
-IATA_TO_ICAO = {
-    "AA": "AAL", "AC": "ACA", "AF": "AFR", "AM": "AMX", "AS": "ASA", "AV": "AVA",
-    "B6": "JBU", "BA": "BAW", "CM": "CMP", "CV": "CLX", "DL": "DAL", "EI": "EIN",
-    "EK": "UAE", "F9": "FFT", "FX": "FDX", "G4": "AAY", "HA": "HAL", "KL": "KLM",
-    "LH": "DLH", "MQ": "ENY", "NK": "NKS", "OH": "JIA", "OO": "SKW", "PT": "SWQ",
-    "QX": "QXE", "SY": "SCX", "UA": "UAL", "WN": "SWA", "WS": "WJA", "YV": "ASH",
-    "YX": "RPA", "ZW": "AWI", "5X": "UPS", "9E": "EDV", "K4": "CKS", "5Y": "GTI",
-    "XP": "CXP", "MX": "MXY", "2Q": "ACN", "LX": "SWR", "NH": "ANA", "JL": "JAL",
-}
-
 
 CONFIG_PATH = Path(os.environ.get("ACARS_CONFIG", HERE.parent / "config.json"))
 

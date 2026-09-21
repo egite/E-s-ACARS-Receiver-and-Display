@@ -34,6 +34,11 @@ function clock(ts, seconds = true) {
   const d = new Date(ts * 1000);
   return `${pad(d.getHours())}:${pad(d.getMinutes())}` + (seconds ? `:${pad(d.getSeconds())}` : "");
 }
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function dateClock(ts) {
+  const d = new Date(ts * 1000);
+  return `${pad(d.getDate())}-${MONTHS[d.getMonth()]}-${pad(d.getFullYear() % 100)}, ${clock(ts, false)}`;
+}
 function ago(ts) {
   if (!ts) return "—";
   const s = Math.max(0, Date.now() / 1000 - ts);
