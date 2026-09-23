@@ -77,7 +77,7 @@ def _hemi(value, letter):
 
 POS_PATTERNS = [
     # N 394358W1043932  (degrees, minutes, seconds)
-    (re.compile(r"(?<![A-Z0-9])([NS]) ?(\d{2})(\d{2})(\d{2})([EW]) ?(\d{3})(\d{2})(\d{2})(?!\d)"),
+    (re.compile(r"(?<![A-Z0-9])([NS]) ?(\d{2})(\d{2})(\d{2})[ ,/]*([EW]) ?(\d{3})(\d{2})(\d{2})(?!\d)"),
      lambda m: (_hemi(int(m[2]) + int(m[3]) / 60 + int(m[4]) / 3600, m[1]),
                 _hemi(int(m[6]) + int(m[7]) / 60 + int(m[8]) / 3600, m[5]))),
     # POSN40231W101251 / N40172W101186  (degrees, minutes and tenths)
@@ -637,6 +637,13 @@ class ACARSWeb:
         msg["english"] = translate(msg, raw)
         msg["type"] = message_type(msg)
         squitter = parse_squitter(msg["text"]) if msg["label"] == "SQ" else None
+        if not msg["position"] and msg["english"].get("position"):
+            # Formats whose coordinates only exist once decoded; range-check them as we do
+            # for weather observations, so a misread never puts an aircraft across the world.
+            p = msg["english"]["position"]
+            home = self.cfg["home"]
+            if haversine_km(p["lat"], p["lon"], home["lat"], home["lon"]) <= self.cfg["max_position_km"]:
+                msg["position"] = p
         obs = observations(msg) if msg["kind"] == "acars" else []
         if obs and not msg["position"]:
             # Weather reports carry the aircraft's position; use the latest sample if it's plausible here.

@@ -202,9 +202,14 @@ def digit_ratio(text):
     return sum(c.isdigit() for c in t) / len(t) if t else 0
 
 
-def result(category, summary, details=None, generic=False):
-    """generic=True marks fallback descriptions that didn't recognise the message format."""
+def result(category, summary, details=None, generic=False, position=None):
+    """generic=True marks fallback descriptions that didn't recognise the message format.
+
+    position is for formats whose coordinates only appear once decoded, so parse_position
+    can't see them in the raw text; the server range-checks it before using it."""
     out = {"category": category, "summary": summary, "details": [d for d in (details or []) if d]}
+    if position:
+        out["position"] = position
     if generic:
         out["generic"] = True
     return out
@@ -784,6 +789,79 @@ def translate_waypoint_report(line, dep, arr):
                    f"Wind {int(wind_dir)}\u00b0 at {int(wind_kt)} kt"])
 
 
+# Southwest label 37, a flight-data report obfuscated with a monoalphabetic substitution.
+# The first two digits of the message pick one of nine cipher alphabets; the rest of the
+# first line is a header. The body is 15 separator-delimited fields in fixed columns.
+# Recovered by aligning the coordinate fields against positions decoded from the same
+# aircraft's other messages: the longitude degrees agree 99% of the time, and the result
+# checks out against physics - true airspeed tracks Mach x the speed of sound at the
+# reported altitude with r=+0.999, and no consecutive pair of reports implies a ground
+# speed above 1100 km/h.
+SOUTHWEST_KEYS = {
+    # group: (field separator, the ten characters standing for digits 0-9)
+    "01": ('Z', '3NOP71-S,U'),
+    "02": ('H', 'C3YJ:4D0R/'),
+    "03": ('K', '5B4L 0CM7D'),
+    "04": ('2', '3 8L4Z9M5:'),
+    "05": ('A', 'CZD E(F)G,'),
+    "06": ('O', 'KJIHGFEDCB'),
+    "07": ('Z', ')G,H-I.J/K'),
+    "08": ('G', 'R A:W9C4S5'),
+    "09": ('K', 'HJI8N: 6LM'),
+}
+SOUTHWEST_SHAPE = (4, 4, 8, 8, 5, 3, 3, 4, 4, 4, 3, 3, 3, 3, 6)
+
+
+def translate_southwest(msg):
+    """Position, altitude, speed, fuel and weight out of a Southwest label 37 report."""
+    head, _, body = msg["text"].partition("\r\n")
+    key = SOUTHWEST_KEYS.get(head[:2])
+    if not key or not body:
+        return None
+    sep, digits = key
+    fields = body.split(sep)
+    if tuple(len(f) for f in fields) != SOUTHWEST_SHAPE:
+        return None
+    table = {c: str(i) for i, c in enumerate(digits)}
+
+    def num(field, *positions):
+        out = "".join(table.get(field[p], " ") for p in positions)
+        return None if " " in out else out
+
+    # The two coordinate fields carry a hemisphere letter, then degrees, a point, thousandths.
+    lat, lon = num(fields[2], 2, 3, 5, 6, 7), num(fields[3], 1, 2, 3, 5, 6, 7)
+    alt, mach = num(fields[4], *range(5)), num(fields[7], 1, 2, 3)
+    if not (lat and lon and alt and fields[2][4] == fields[3][4]):
+        return None
+    lat, lon = int(lat) / 1000, -int(lon) / 1000
+    tas, fob = num(fields[6], 0, 1, 2), num(fields[8], 0, 1, 3)
+    eta, weight = num(fields[9], *range(4)), num(fields[14], *range(6))
+    summary = f"Position report, {feet(int(alt))}" + (f", Mach {int(mach) / 1000:.3f}" if mach else "")
+    return result("position", summary,
+                  [latlon(lat, lon),
+                   f"True airspeed {int(tas)} kt" if tas else None,
+                   f"Fuel on board {int(fob) * 100:,} lb" if fob else None,
+                   f"ETA {hhmmss(eta)}" if eta and int(eta[:2]) < 24 else None,
+                   f"Gross weight {int(weight):,} lb" if weight else None],
+                  position={"lat": lat, "lon": lon, "src": "Southwest label 37"})
+
+
+def translate_autpos(msg):
+    """FedEx label 16: an automatic position report in plain text, unset fields as '*'."""
+    text = msg["text"]
+    if "/AUTPOS/" not in text:
+        return None
+    fields = dict(re.findall(r"/([A-Z]{3})\s+([^\s/\r\n]+)", text))
+    alt = fields.get("ALT", "").lstrip("0")
+    fob = fields.get("FOB", "").lstrip("0")
+    wind = re.fullmatch(r"(\d{3})(\d{3})", fields.get("WND", ""))
+    return result("position", "Automatic position report" + (f", {feet(alt)}" if alt.isdigit() else ""),
+                  [pos_detail(msg),
+                   f"Fuel on board {int(fob):,} lb" if fob.isdigit() else None,
+                   f"Wind {int(wind.group(1))}° at {int(wind.group(2))} kt" if wind else None,
+                   f"Outside air {int(fields['SAT'])}°C" if fields.get("SAT", "").lstrip("-").isdigit() else None])
+
+
 # ----------------------------------------------------------------- dispatcher
 
 def translate(msg, raw=None):
@@ -878,6 +956,10 @@ def translate(msg, raw=None):
             return result("maintenance" if re.search(r"RESET|FAULT|FAIL|INOP|MEL", text) else "crew",
                           f"Message to airline operations: “{reflow(lines)}”")
 
+    if label == "16" or "/AUTPOS/" in text:
+        report = translate_autpos(msg)
+        if report:
+            return report
     if label == "B9":
         m = re.search(r"TI2/\d{3}(" + ICAO_AP + ")", text)
         return result("request", f"Crew requested the digital ATIS for {m.group(1)}" if m else "Crew requested a digital ATIS")
@@ -893,7 +975,7 @@ def translate(msg, raw=None):
         return result("flight", oooi[label])
 
     if airline == "WN" and label == "37":
-        return result("encoded", "Southwest airline data message (encoded)")
+        return translate_southwest(msg) or result("encoded", "Southwest airline data message (encoded)")
     if airline == "OO" and text.startswith("P,"):
         r = translate_skywest(msg)
         if r:
