@@ -120,17 +120,66 @@ def wordlike(word):
 
 
 def free_text_lines(text):
-    """Lines (or comma-separated fields) that read like human-written words rather than data."""
+    """Lines (or comma-separated fields) that read like human-written words rather than data.
+
+    Returned with their original spacing: reflow() reads the line length to tell a
+    hard wrap from a break the crew typed, so stripping here would lose that."""
     out = []
     for line in re.split(r"[\r\n]+", text):
-        for chunk in (line.split(",") if "," in line else [line]):
-            chunk = chunk.strip()
+        for raw in (line.split(",") if "," in line else [line]):
+            chunk = raw.strip()
             words = re.findall(r"[A-Za-z]{2,}", chunk)
             letters = sum(len(w) for w in words)
             if len(words) >= 2 and letters >= 8 and letters / max(len(chunk.replace(" ", "")), 1) >= 0.75 \
                     and not re.search(r"[a-z]", chunk) and sum(map(bool, map(wordlike, words))) >= 0.8 * len(words):
-                out.append(chunk)
+                out.append(raw)
     return out
+
+
+MCDU_COLUMNS = 24  # width of the free-text box crews type into on these fleets
+
+# Everyday words and the shorthand crews lean on, used only to tell a wrapped word from
+# two whole ones when a line happens to end flush with the last column. Deliberately
+# excludes single letters and word endings (S, T, ED, ING), which are exactly what the far
+# half of a wrap looks like, and anything that is also a prefix of a longer word a crew
+# might type out (MIN of MINUTES, CONT of CONTINUE).
+COMMON_WORDS = set("""
+ABOUT AFTER ALL ALSO AN AND ANY ARE AS AT BACK BE BEEN BEST BETTER BUT BY CAN DO DOWN
+EVEN FEW FOR FROM GET GO GOOD GOT GREAT HAS HAVE HERE HOW IF IN INTO IS IT ITS JUST KEEP
+KNOW LAST LET LIKE LOOK MAKE ME MORE MOST MUCH MY NEAR NEED NEW NEXT NICE NO NOT NOW OF
+OFF OKAY ON ONE ONLY OR OUR OUT OVER PLEASE PLS REALLY RIGHT SAME SEE SEEMS SEND SHOULD
+SINCE SO SOME SOON STILL SURE TAKE THAN THANK THANKS THAT THE THEM THEN THERE THEY THIS
+THRU TIME TO TOO UP US VERY VIA WANT WAS WAY WE WELL WERE WHAT WHEN WHERE WHICH WHILE WHY
+WILL WITH WOULD YES YOU YOUR
+ATC CHOP LGT LT MOD OCNL THX TURB USE WX
+""".split())
+
+
+def reflow(lines):
+    """Re-join ACARS free text that the aircraft hard-wrapped at the field width.
+
+    The break falls wherever the character count runs out, mid-word as often as not,
+    so CONSIOSNESS arrives as "CON" then "SIOSNESS". A line filled to the last column
+    is one of those wraps and glues straight onto the next; a short line is where the
+    crew stopped typing, and gets a space. Lines must arrive unstripped - their length
+    is the whole signal - and a block that never reaches the last column is left alone,
+    which keeps us from welding words together in text we only think was wrapped.
+    """
+    lines = [l for l in lines if l.strip()]
+    if not lines:
+        return ""
+    wrapped = max(len(l) for l in lines) == MCDU_COLUMNS
+    out = lines[0]
+    for prev, line in zip(lines, lines[1:]):
+        # A line can also end flush with the last column by chance, right on a word
+        # boundary. Punctuation there settles it; otherwise an everyday word on either
+        # side of the seam means we would be welding two whole words together.
+        tail = re.findall(r"[A-Z0-9]+", prev)
+        head = re.findall(r"[A-Z0-9]+", line)
+        glue = (wrapped and len(prev) == MCDU_COLUMNS and prev[-1] not in ".,!?;:"
+                and not ({tail[-1] if tail else ""} | {head[0] if head else ""}) & COMMON_WORDS)
+        out += ("" if glue else " ") + line
+    return re.sub(r" {2,}", " ", out).strip()
 
 
 def looks_encoded(text):
@@ -315,9 +364,9 @@ def translate_united_slash(msg):
     code, desc, orig, dest, _day, t, rest = m.groups()
     details = [f"Flight {orig} → {dest}" if orig and dest else None, f"Sent {hhmmss(t)}" if t else None]
     # Free-text messages to dispatch: header line, then the crew's words
-    body = [line.strip() for line in re.split(r"[\r\n]+", rest or "")[1:] if line.strip()]
-    if "DISP" in desc.upper() and body:
-        return result("crew", f"Crew message to dispatch: “{' / '.join(body)}”", details)
+    body = re.split(r"[\r\n]+", rest or "")[1:]
+    if "DISP" in desc.upper() and any(line.strip() for line in body):
+        return result("crew", f"Crew message to dispatch: “{reflow(body)}”", details)
     if code == "C3" or "GATE" in desc.upper():
         return result("request", f"Crew requested a gate assignment at {dest}" if dest else UA_CODES["C3"], details)
     if code == "R3" or "HOWGOZIT" in desc.upper():
@@ -360,7 +409,7 @@ def translate_skywest(msg):
     words = free_text_lines(" ".join(q for q in parts if re.search(r"[A-Z]{2,} [A-Z]{2,}", q)))
     summary = "Flight status report" + (f", {route[0]} → {route[1]}" if route else "")
     if words:
-        summary += f": “{' '.join(words)}”"
+        summary += f": “{reflow(words)}”"
     return result("crew" if words else "flight", summary, [when])
 
 
@@ -693,7 +742,7 @@ def translate_label80(msg):
         if found:
             tags.update({k: v.strip() for k, v in found})
         elif line.strip():
-            text_lines.append(line.strip())
+            text_lines.append(line)
     details = [f"Flight {dep} → {arr}"]
     for tag, label in (("ALT", "Altitude"), ("FL", "Flight level"), ("MCH", "Mach"), ("SPD", "Speed"),
                        ("FOB", "Fuel on board"), ("SAT", "Outside air"), ("ETA", "ETA")):
@@ -702,7 +751,7 @@ def translate_label80(msg):
             details.append(f"{label} {value}")
     name = LABEL80_TYPES.get(code, f"{code.capitalize()} report")
     if code == "DSPTCH" and text_lines:
-        return result("crew", f"Crew message to dispatch: “{' / '.join(text_lines)}”", details)
+        return result("crew", f"Crew message to dispatch: “{reflow(text_lines)}”", details)
     category = "position" if code == "POSRPT" else "flight"
     return result(category, name, details + ([pos_detail(msg)] if msg.get("position") else []))
 
@@ -799,9 +848,9 @@ def translate(msg, raw=None):
             rest = m.group(2)
             parts = [f"departure runway {d}" for d in re.findall(r"/DPR(\d\d[LRC]?)", rest)] + \
                     [f"arrival runway {a}" for a in re.findall(r"/ARR(\d\d[LRC]?)", rest)]
-            words = [l.strip() for l in re.split(r"[\r\n]+", rest)[1:] if re.search(r"[A-Z]{2,}", l)]
+            words = [l for l in re.split(r"[\r\n]+", rest)[1:] if re.search(r"[A-Z]{2,}", l)]
             if words:
-                return result("crew", f"Crew message about {m.group(1)}: “{' / '.join(words)}”")
+                return result("crew", f"Crew message about {m.group(1)}: “{reflow(words)}”")
             return result("flight", f"Operations message for {m.group(1)}" + (f": {', '.join(parts)}" if parts else ""))
     if airline == "UA" and label == "33":  # continuation blocks of the system configuration report
         return result("data", "Avionics system configuration report")
@@ -809,7 +858,7 @@ def translate(msg, raw=None):
         lines = free_text_lines(text)
         if lines:
             return result("maintenance" if re.search(r"RESET|FAULT|FAIL|INOP|MEL", text) else "crew",
-                          f"Message to airline operations: “{' / '.join(lines)}”")
+                          f"Message to airline operations: “{reflow(lines)}”")
 
     if label == "B9":
         m = re.search(r"TI2/\d{3}(" + ICAO_AP + ")", text)
@@ -869,11 +918,11 @@ def translate(msg, raw=None):
     # Delta free-text labels: "141530 KPDX KATL6" header, then the message
     m = re.match(r"(\d{6}) (" + ICAO_AP + ") (" + ICAO_AP + r")\d?\s*(.*)", text, re.S) if airline in ("DL", "NW") else None
     if m:
-        words = [l.strip() for l in re.split(r"[\r\n]+", m.group(4))
+        words = [l for l in re.split(r"[\r\n]+", m.group(4))
                  if re.search(r"[A-Z]{2,}", l) and not re.search(r"\[\s*\]", l) and len(l.strip()) > 1
                  and not l.strip().startswith("/")]
         if words:
-            return result("crew", f"Crew message: “{' / '.join(words)}”", [f"Flight {m.group(2)} → {m.group(3)}"])
+            return result("crew", f"Crew message: “{reflow(words)}”", [f"Flight {m.group(2)} → {m.group(3)}"])
         return result("flight", f"Flight message {m.group(2)} → {m.group(3)}", [f"Sent {hhmmss(m.group(1))}"])
     m = re.match(r"WXR\d\d\s+((?:" + ICAO_AP + r",?)+)", text)
     if m:
@@ -903,7 +952,7 @@ def translate(msg, raw=None):
     lines = free_text_lines(text)
     route = route_in(text)
     if lines and label not in ("H1",):
-        return result("crew", f"Crew / dispatch message: “{' / '.join(lines)}”",
+        return result("crew", f"Crew / dispatch message: “{reflow(lines)}”",
                       [f"Flight {route[0]} → {route[1]}" if route else None])
 
     if label != "H1" and looks_encoded(text):
