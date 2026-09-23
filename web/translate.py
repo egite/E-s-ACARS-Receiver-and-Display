@@ -766,6 +766,24 @@ def translate_label4a(msg):
     return None
 
 
+# Delta/Northwest label 17, in fixed columns: a waypoint padded into eight, then the
+# time over it, altitude in hundreds of feet, ETA at the destination, outside air
+# temperature and the wind. Altitude tracks temperature at r=-0.92 over the samples we
+# have, which is what pins the layout down. The trailing seven digits aren't documented.
+WAYPOINT_REPORT = re.compile(r"([A-Z][A-Z0-9]{1,6}) +(\d{4})(\d{3})(\d{4})(-?\d{2})(\d{3})( *\d{1,3})\d{7}")
+
+
+def translate_waypoint_report(line, dep, arr):
+    """Progress report over a named waypoint: no lat/lon, so nothing to put on the map."""
+    m = WAYPOINT_REPORT.fullmatch(line)
+    if not m:
+        return None
+    wpt, over, alt, eta, temp, wind_dir, wind_kt = m.groups()
+    return result("position", f"Position report over {wpt} at {hhmmss(over)}, {feet(int(alt) * 100)}",
+                  [f"Flight {dep} \u2192 {arr}", f"ETA {hhmmss(eta)}", f"Outside air {int(temp)}\u00b0C",
+                   f"Wind {int(wind_dir)}\u00b0 at {int(wind_kt)} kt"])
+
+
 # ----------------------------------------------------------------- dispatcher
 
 def translate(msg, raw=None):
@@ -918,12 +936,21 @@ def translate(msg, raw=None):
     # Delta free-text labels: "141530 KPDX KATL6" header, then the message
     m = re.match(r"(\d{6}) (" + ICAO_AP + ") (" + ICAO_AP + r")\d?\s*(.*)", text, re.S) if airline in ("DL", "NW") else None
     if m:
-        words = [l for l in re.split(r"[\r\n]+", m.group(4))
+        body = [l for l in re.split(r"[\r\n]+", m.group(4))
+                if l.strip() and not l.strip().startswith("/")]
+        report = translate_waypoint_report(body[0].strip(), m.group(2), m.group(3)) if body else None
+        if report:
+            return report
+        # digit_ratio keeps numeric report lines - winds, positions - out of the crew bucket.
+        words = [l for l in body
                  if re.search(r"[A-Z]{2,}", l) and not re.search(r"\[\s*\]", l) and len(l.strip()) > 1
-                 and not l.strip().startswith("/")]
+                 and digit_ratio(l) < 0.5]
         if words:
             return result("crew", f"Crew message: “{reflow(words)}”", [f"Flight {m.group(2)} → {m.group(3)}"])
-        return result("flight", f"Flight message {m.group(2)} → {m.group(3)}", [f"Sent {hhmmss(m.group(1))}"])
+        # The six leading digits are the flight's day and hour plus the label, not a clock time.
+        if msg.get("position"):
+            return result("position", f"Position report, {m.group(2)} → {m.group(3)}", [pos_detail(msg)])
+        return result("flight", f"Flight message {m.group(2)} → {m.group(3)}")
     m = re.match(r"WXR\d\d\s+((?:" + ICAO_AP + r",?)+)", text)
     if m:
         airports = ", ".join(re.findall(ICAO_AP, m.group(1)))
