@@ -862,6 +862,69 @@ def translate_autpos(msg):
                    f"Outside air {int(fields['SAT'])}°C" if fields.get("SAT", "").lstrip("-").isdigit() else None])
 
 
+# Business-aviation label 44 (the XA/GS/ZD datalink prefixes), obfuscated the same way as
+# Southwest's label 37: the first two digits pick one of eight cipher alphabets and the
+# body is nine separator-delimited fields in fixed columns. No aligned positions were
+# available for these aircraft, so the alphabets came from the format's own constraints -
+# the columns holding a minutes-tens digit take exactly six values, which splits the ten
+# digits into 0-5 and 6-9, and field 1 ends in a constant "10" for the longitude - leaving
+# 576 candidates per group. Scoring those on whether field 6 reads as a clock time near
+# when the message arrived picked one: it lands within two minutes for every message in
+# every group, field 7 is always ahead of it (an ETA), and the resulting positions sit a
+# median of 152 km from the receiver. Cross-checks: altitudes run 11,700-45,000 ft with a
+# median of 41,000, no pair of consecutive reports implies a ground speed over 1100 km/h,
+# and the characters used as digits never appear in the airport-code fields, which a
+# substitution cipher forbids. Those two fields hold ICAO codes but the letter alphabet
+# is not solved, so they are left alone.
+BIZJET_KEYS = {
+    # group: (field separator, the ten characters standing for digits 0-9)
+    "01": ('b', "lA~S'ELq(?"),
+    "02": ('I', ',3-0mQ9]A)'),
+    "03": ('q', 'xt(J-DeP9V'),
+    "04": ('V', "'\\!mHFXa:+"),
+    "05": (')', 'jx9duCo`eB'),
+    "06": ('7', 'g. C9)f(:`'),
+    "07": (')', '.;40m<UMDk'),
+    "08": ('Z', 'LYe}`vaKct'),
+}
+BIZJET_SHAPE = (5, 13, 3, 4, 4, 4, 4, 4, 5)
+
+
+def translate_bizjet(msg):
+    """Position, altitude and ETA out of a business-aviation label 44 report."""
+    key = BIZJET_KEYS.get(msg["text"][:2])
+    if not key:
+        return None
+    sep, digits = key
+    fields = msg["text"][2:].split(sep)
+    if tuple(len(f) for f in fields) != BIZJET_SHAPE:
+        return None
+    table = {c: str(i) for i, c in enumerate(digits)}
+
+    def num(field, *positions):
+        out = "".join(table.get(field[p], " ") for p in positions)
+        return None if " " in out else out
+
+    where = fields[1]
+    # Degrees then decimal minutes, with the longitude's leading "10" written out in full.
+    if num(where, 7, 8) != "10":
+        return None
+    lat, lon = num(where, 1, 2, 3, 4, 5), num(where, 9, 10, 11, 12)
+    if not (lat and lon):
+        return None
+    lat = int(lat[:2]) + float(f"{lat[2:4]}.{lat[4]}") / 60
+    lon = -(100 + int(lon[0]) + float(f"{lon[1:3]}.{lon[3]}") / 60)
+    alt, over, eta = num(fields[2], 0, 1, 2), num(fields[6], 0, 1, 2, 3), num(fields[7], 0, 1, 2, 3)
+    if over and int(over[:2]) > 23:
+        return None
+    summary = "Position report" + (f", {feet(int(alt) * 100)}" if alt else "")
+    return result("position", summary,
+                  [latlon(lat, lon),
+                   f"Reported {hhmmss(over)}" if over else None,
+                   f"ETA {hhmmss(eta)}" if eta and int(eta[:2]) < 24 else None],
+                  position={"lat": lat, "lon": lon, "src": "Business-aviation label 44"})
+
+
 # ----------------------------------------------------------------- dispatcher
 
 def translate(msg, raw=None):
@@ -1064,6 +1127,10 @@ def translate(msg, raw=None):
         return result("crew", f"Crew / dispatch message: “{reflow(lines)}”",
                       [f"Flight {route[0]} → {route[1]}" if route else None])
 
+    if label == "44":
+        report = translate_bizjet(msg)
+        if report:
+            return report
     if label != "H1" and looks_encoded(text):
         return result("encoded", "Airline data message (encoded)", [f"Label {label}"])
 
