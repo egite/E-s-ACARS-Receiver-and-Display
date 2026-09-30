@@ -41,6 +41,7 @@
   "vrs_poll_secs": 5,
 
   "history_hours": 2,
+  "archive": {"enabled": true, "dir": "archive/messages", "retention_days": 7},
 
   "health": {
     "silence_minutes": {"acars": 30, "vdl2": 5},

@@ -193,6 +193,37 @@ print(f"{generic} messages without a specific translation (counted before block 
 EOF
 ```
 
+## Keeping messages
+
+Two separate things hold on to traffic, and they answer different questions.
+
+`history_hours` is the browsable window the web pages work over: the flight cards, the map,
+the stats page and the Raw feed all read it, and it lives in memory only, so a restart
+empties it. It can be set up to 168 hours (7 days). Messages stay as live dicts for the
+first 48 hours and are then re-encoded as compact JSON, about six times smaller, and parsed
+back only when something asks for one. That is what makes a week affordable: 7 days of live
+dicts would be roughly 1.2 GB, where the mixed form is around 500 MB. The cost is that
+whole-store passes — the stats page, the Message types dialog — have to parse the cold part,
+so they get slower the further back you keep.
+
+`archive` is the durable record, and it survives restarts:
+
+```json
+"archive": { "enabled": true, "dir": "archive/messages", "retention_days": 7 }
+```
+
+It appends every frame received, link-layer ones included, to one JSONL file per UTC day, and
+deletes files past `retention_days`. Each line is the message as decoded plus `adsb` — the
+aircraft's position, altitude, ground speed and track from VRS at the moment the message
+arrived, when ADS-B had seen it. That pairing is the point. An unfamiliar airline format is
+solvable when its fields can be lined up against a position you already know, and mostly
+guesswork when it cannot: Southwest's label 37 fell to exactly that alignment, while the
+business-aviation label 44 had to be attacked through the format's own constraints because
+almost none of those aircraft had an independent fix. Expect roughly 15-20 MB a day.
+
+The decoder's raw JSON is not archived — it is bulky and carries only signal metadata that is
+already on the line.
+
 ## Troubleshooting
 
 - **`usb_claim_interface error -6`** — the DVB-T driver holds the dongle. Reboot after installing (the
@@ -245,6 +276,7 @@ web/static/            the web pages
 tools/calibrate_ppm.py measure a dongle's tuning error using dumpvdl2
 tools/update_airlines.py  rebuild web/airlines.json from Wikipedia's list of airline codes
 tests/corpus.jsonl     real messages for translation testing
+archive/messages/      archived traffic, one JSONL file per day (not in git)
 screenshots/           images for this README
 third_party/           acarsdec, dumpvdl2, libacars (created by install.sh, not in git)
 ```

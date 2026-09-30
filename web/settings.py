@@ -125,7 +125,8 @@ def validate(new, current):
         errors["vrs_url"] = "must start with http:// or https://"
     out["vrs_feed"] = str(new.get("vrs_feed") or "").strip() or None
     out["vrs_poll_secs"] = _number(errors, "vrs_poll_secs", new.get("vrs_poll_secs"), 1, 300, integer=True)
-    out["history_hours"] = _number(errors, "history_hours", new.get("history_hours"), 0.25, 48)
+    # Beyond HOT_HOURS the store holds messages as compact JSON, so a week fits in memory.
+    out["history_hours"] = _number(errors, "history_hours", new.get("history_hours"), 0.25, 168)
     out["max_position_km"] = _number(errors, "max_position_km", new.get("max_position_km"), 10, 20000, integer=True)
 
     health = new.get("health") or {}

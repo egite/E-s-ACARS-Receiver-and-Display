@@ -13,6 +13,7 @@ import os
 import re
 import time
 from collections import Counter, OrderedDict, deque
+from datetime import UTC, datetime
 from pathlib import Path
 
 import aiohttp
@@ -262,12 +263,84 @@ def normalize_vdl2(d, cfg):
 
 # --------------------------------------------------------------- storage
 
+class Archive:
+    """Append-only JSONL of everything received, one file per UTC day.
+
+    The store above is the live view and dies with the process; this is the record that
+    outlives a restart and the retention window. Each line carries the message as decoded
+    plus the aircraft's ADS-B fix at the moment it arrived, which is the part that matters
+    later: an unfamiliar airline format is solvable when you can line its fields up against
+    a position you already know, and guesswork when you cannot.
+    """
+
+    def __init__(self, cfg):
+        conf = cfg.get("archive") or {}
+        self.enabled = bool(conf.get("enabled"))
+        path = Path(conf.get("dir") or "archive/messages")
+        self.dir = path if path.is_absolute() else HERE.parent / path
+        self.retention_days = max(1, int(conf.get("retention_days") or 7))
+        self.handle, self.day, self.unflushed, self.written, self.failed = None, None, 0, 0, False
+
+    def _open(self, day):
+        if self.handle:
+            self.handle.close()
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self.handle, self.day, self.unflushed = (self.dir / f"{day}.jsonl").open("a"), day, 0
+        for old in sorted(self.dir.glob("*.jsonl"))[:-self.retention_days]:
+            old.unlink(missing_ok=True)
+
+    def note(self, msg, vrs):
+        """vrs is the aircraft's current VRS record, or None when ADS-B hasn't seen it."""
+        if not self.enabled or self.failed:
+            return
+        try:
+            day = datetime.fromtimestamp(msg["ts"], UTC).strftime("%Y-%m-%d")
+            if day != self.day:
+                self._open(day)
+            record = {k: msg.get(k) for k in ARCHIVE_FIELDS if msg.get(k) is not None}
+            if vrs and "Lat" in vrs and "Long" in vrs:
+                record["adsb"] = {"lat": vrs["Lat"], "lon": vrs["Long"], "alt": vrs.get("GAlt") or vrs.get("Alt"),
+                                  "gs": vrs.get("Spd"), "track": vrs.get("Trak"), "postime": vrs.get("PosTime")}
+            self.handle.write(json.dumps(record, separators=(",", ":")) + "\n")
+            self.written += 1
+            self.unflushed += 1
+            if self.unflushed >= 50:  # about a minute of traffic; a crash loses at most that
+                self.handle.flush()
+                self.unflushed = 0
+        except OSError as exc:  # a full or read-only disk must not take the receiver down
+            log.error("archive disabled after write error: %s", exc)
+            self.failed = True
+
+    def close(self):
+        if self.handle:
+            self.handle.flush()
+            self.handle.close()
+            self.handle = None
+
+
+# What each archived line keeps: enough to re-run translation and cryptanalysis later,
+# without the decoder's raw JSON, which is bulky and adds only signal metadata we already have.
+ARCHIVE_FIELDS = ("id", "ts", "source", "freq", "level", "noise", "errors", "icao", "reg", "flight",
+                  "direction", "gs", "label", "sublabel", "msgno", "text", "kind", "type", "position")
+
+HOT_HOURS = 48  # messages stay as live dicts this long, then go to compact JSON
+WHOLE_STORE_CACHE_SECS = 30  # how long a pass over every message is reused for
+
+
 class MemoryStore:
-    """Messages from the last history_hours, kept in RAM only (nothing survives a restart)."""
+    """Messages from the last history_hours, kept in RAM only (nothing survives a restart).
+
+    A live message dict measures about 3.2 kB, which is affordable for the couple of days
+    the flight cards are really used over but not for a week of traffic - 7 days of dicts
+    is around 1.2 GB, more than this Pi has. Past HOT_HOURS an entry is re-encoded as
+    compact JSON, 6x smaller, and parsed back only when something asks for it, which for
+    messages that old is rare. Keeping a week costs roughly 500 MB rather than 1.2 GB.
+    """
 
     def __init__(self):
-        self.messages = OrderedDict()  # id -> (msg, raw JSON string or None), in arrival order
+        self.messages = OrderedDict()  # id -> [ts, msg dict or compact JSON, raw JSON or None]
         self.next_id = 1
+        self.compact_cursor = 1
 
     def add(self, msg, raw):
         msg_id = self.next_id
@@ -275,28 +348,50 @@ class MemoryStore:
         msg["id"] = msg_id
         # Original JSON is kept compact, and not at all for link-layer frames, to keep memory down.
         raw_json = json.dumps(raw, separators=(",", ":")) if msg["kind"] not in ("link", "partial") else None
-        self.messages[msg_id] = (msg, raw_json)
+        self.messages[msg_id] = [msg["ts"], msg, raw_json]
         return msg_id
+
+    @staticmethod
+    def _msg(entry):
+        return json.loads(entry[1]) if isinstance(entry[1], str) else entry[1]
 
     def get(self, ids, keep_raw=False):
         out = []
         for msg_id in sorted(ids, reverse=True):
             entry = self.messages.get(msg_id)
             if entry:
-                msg = dict(entry[0])
+                msg = self._msg(entry)
+                msg = msg if isinstance(entry[1], str) else dict(msg)
                 if keep_raw:
-                    msg["raw"] = json.loads(entry[1]) if entry[1] else None
+                    msg["raw"] = json.loads(entry[2]) if entry[2] else None
                 out.append(msg)
         return out
+
+    def walk(self):
+        """Every message held, for whole-store passes. Read-only: hot entries come back live."""
+        for entry in self.messages.values():
+            yield self._msg(entry)
 
     def recent(self, limit):
         ids = list(reversed(self.messages))[:limit]
         return list(reversed(self.get(ids)))
 
+    def compact(self, older_than):
+        """Re-encode entries that have aged out of the hot window. Ids only ever go up, so
+        the cursor means this costs the newly-aged messages, not a walk of the whole store."""
+        while self.compact_cursor < self.next_id:
+            entry = self.messages.get(self.compact_cursor)
+            if entry is not None:
+                if entry[0] >= older_than:
+                    break
+                if not isinstance(entry[1], str):
+                    entry[1] = json.dumps(entry[1], separators=(",", ":"))
+            self.compact_cursor += 1
+
     def purge(self, older_than):
         while self.messages:
-            msg_id, (msg, _) = next(iter(self.messages.items()))
-            if msg["ts"] >= older_than:
+            msg_id, entry = next(iter(self.messages.items()))
+            if entry[0] >= older_than:
                 break
             del self.messages[msg_id]
 
@@ -603,6 +698,8 @@ class ACARSWeb:
     def __init__(self, cfg):
         self.cfg = cfg
         self.store = MemoryStore()
+        self.archive = Archive(self.cfg)
+        self._store_scans = {}  # name -> (computed at, value), see _whole_store
         self.vrs = VRS(cfg)
         self.tracker = Tracker(cfg, self.vrs)
         self.clients = set()
@@ -651,6 +748,7 @@ class ACARSWeb:
             home = self.cfg["home"]
             if haversine_km(latest["lat"], latest["lon"], home["lat"], home["lon"]) <= self.cfg["max_position_km"]:
                 msg["position"] = {"lat": latest["lat"], "lon": latest["lon"], "alt": latest["alt"], "src": "Weather report"}
+        self.archive.note(msg, self.vrs.by_icao.get(msg["icao"]) if msg["icao"] else None)
         changed = self.blocks.observe(msg)
         key = self.tracker.add(msg)  # resolves the ICAO address before the message is stored
         self.store.add(msg, raw)
@@ -732,9 +830,20 @@ class ACARSWeb:
         msgs = self.store.get(list(a["msg_ids"]))
         return web.json_response(msgs)
 
+    async def _whole_store(self, name, work):
+        """Run a pass over every message off the event loop, and not more often than
+        WHOLE_STORE_CACHE_SECS. At a week of history these touch a few hundred thousand
+        messages and take seconds; inline they would stall every other request."""
+        hit = self._store_scans.get(name)
+        if hit and time.time() - hit[0] < WHOLE_STORE_CACHE_SECS:
+            return hit[1]
+        value = await asyncio.to_thread(work)
+        self._store_scans[name] = (time.time(), value)
+        return value
+
     async def type_counts(self, request):
         """How many messages of each type are in memory, for the Message types dialog."""
-        counts = Counter(msg["type"] for msg, _ in self.store.messages.values())
+        counts = await self._whole_store("types", lambda: Counter(msg["type"] for msg in self.store.walk()))
         return web.json_response({"types": MESSAGE_TYPES, "counts": counts,
                                   "history_hours": self.cfg["history_hours"]})
 
@@ -744,10 +853,12 @@ class ACARSWeb:
             "generated": now,
             "history_hours": self.cfg["history_hours"],
             "server": {"memory_mb": process_memory_mb(), "messages_in_memory": len(self.store.messages),
+                       "archived": self.archive.written if self.archive.enabled else None,
                        "aircraft_tracked": len(self.tracker.aircraft), "uptime": int(now - self.started),
                        "vrs_configured": self.vrs.configured, "vrs_ok": self.vrs.ok, "vrs_aircraft": len(self.vrs.by_icao)},
             "health": self.health.report(),
-            "traffic": stats_summary(self.store, self.tracker, self.cfg, now),
+            "traffic": await self._whole_store("traffic",
+                                               lambda: stats_summary(self.store, self.tracker, self.cfg, now)),
             "ground_stations": self.stations.report(),
         })
 
@@ -831,7 +942,9 @@ class ACARSWeb:
 
     async def purge_loop(self):
         while True:
-            self.store.purge(time.time() - self.cfg["history_hours"] * 3600)
+            now = time.time()
+            self.store.compact(now - HOT_HOURS * 3600)
+            self.store.purge(now - self.cfg["history_hours"] * 3600)
             await asyncio.sleep(60)
 
     async def on_startup(self, app):
@@ -840,12 +953,15 @@ class ACARSWeb:
             await loop.create_datagram_endpoint(lambda s=source: UDPIngest(self, s), local_addr=("127.0.0.1", port))
             log.info("listening for %s JSON on udp/127.0.0.1:%d", source, port)
         log.info("keeping %s hours of messages in memory", self.cfg["history_hours"])
+        if self.archive.enabled:
+            log.info("archiving every message to %s, keeping %d days", self.archive.dir, self.archive.retention_days)
         app["tasks"] = [asyncio.create_task(self.vrs_loop()), asyncio.create_task(self.purge_loop()),
                         asyncio.create_task(self.health_loop())]
 
     async def on_cleanup(self, app):
         for task in app["tasks"]:
             task.cancel()
+        self.archive.close()
 
     def make_app(self):
         @web.middleware

@@ -301,7 +301,7 @@ def stats_summary(store, tracker, cfg, now):
     start = now - cfg["history_hours"] * 3600
     buckets = {}
     freqs, airlines, types = {}, Counter(), Counter()
-    for msg, _raw in store.messages.values():
+    for msg in store.walk():
         if msg["ts"] < start:
             continue
         content = msg["type"].split(":")[1] not in ("linktest", "status", "partial", "ack", "handoff", "connection", "network")
