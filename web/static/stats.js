@@ -205,9 +205,33 @@ function renderStations(gs) {
     <h4 class="sub-title">VDL2 stations aircraft are talking to</h4>${addrs || `<div class="muted small">None yet.</div>`}`;
 }
 
-function renderServer(s) {
+const size = (bytes) => bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB`
+  : bytes >= 1e6 ? `${Math.round(bytes / 1e6)} MB`
+  : bytes >= 1e3 ? `${Math.round(bytes / 1e3)} kB` : `${bytes} B`;
+
+function renderServer(s, store, archive) {
+  // Messages past hot_hours are held as compact JSON rather than live objects, and
+  // everything received is also written to disk. Both are worth showing: without them
+  // a long history window looks like it is simply piling up in RAM.
+  let held = tile("Messages in memory", num(s.messages_in_memory), `last ${last.history_hours} h`);
+  if (store) {
+    // Show the split even while nothing has aged out yet, so it is clear the window is not
+    // simply accumulating in RAM and when the compact half will start.
+    const waiting = `all live · compacts past ${store.hot_hours} h`;
+    held = tile("Messages in memory", num(store.total),
+      store.compact ? `${num(store.live)} live · ${num(store.compact)} compact` : waiting) +
+      tile("Held as", size(store.live_bytes + store.compact_bytes),
+        store.compact ? `${size(store.live_bytes)} live · ${size(store.compact_bytes)} compact`
+          : `live objects, ${store.hot_hours} h then compact`);
+  }
+  let arch = tile("Archive", "off", "not saving to disk");
+  if (archive && archive.enabled) {
+    arch = tile("Archive", archive.failed ? "failed" : size(archive.bytes),
+      archive.failed ? "write error, see the log"
+        : `${num(archive.written)} written · ${archive.days}/${archive.retention_days} days on disk`);
+  }
   els.server.innerHTML = tile("Memory", s.memory_mb != null ? `${s.memory_mb} MB` : "—", "web server process") +
-    tile("Messages in memory", num(s.messages_in_memory), `last ${last.history_hours} h`) +
+    held + arch +
     tile("Aircraft tracked", num(s.aircraft_tracked)) +
     tile("Uptime", durationText(s.uptime)) +
     tile("VRS", !s.vrs_configured ? "not configured" : s.vrs_ok ? `${num(s.vrs_aircraft)} aircraft` : "offline");
@@ -228,7 +252,7 @@ async function refresh() {
     renderTimeline(full.traffic);
     renderBreakdowns(full);
     renderStations(full.ground_stations);
-    renderServer(full.server);
+    renderServer(full.server, full.store, full.archive);
     const s = full.server, rx = Object.fromEntries(full.health.receivers.map((r) => [r.source, r]));
     renderStats(els.stats, {
       last_hour: { VDL2: rx.VDL2?.frames_hour }, last_hour_content: { ACARS: rx.ACARS?.content_hour, VDL2: rx.VDL2?.content_hour },

@@ -280,6 +280,7 @@ class Archive:
         self.dir = path if path.is_absolute() else HERE.parent / path
         self.retention_days = max(1, int(conf.get("retention_days") or 7))
         self.handle, self.day, self.unflushed, self.written, self.failed = None, None, 0, 0, False
+        self.flushed_at = 0.0
 
     def _open(self, day):
         if self.handle:
@@ -304,9 +305,11 @@ class Archive:
             self.handle.write(json.dumps(record, separators=(",", ":")) + "\n")
             self.written += 1
             self.unflushed += 1
-            if self.unflushed >= 50:  # about a minute of traffic; a crash loses at most that
+            # Bounded by time as well as count: at a quiet moment a count alone can leave the
+            # day's file looking empty for minutes, which reads as broken.
+            if self.unflushed >= 50 or time.time() - self.flushed_at > 10:
                 self.handle.flush()
-                self.unflushed = 0
+                self.unflushed, self.flushed_at = 0, time.time()
         except OSError as exc:  # a full or read-only disk must not take the receiver down
             log.error("archive disabled after write error: %s", exc)
             self.failed = True
@@ -317,6 +320,14 @@ class Archive:
             self.handle.close()
             self.handle = None
 
+    def report(self):
+        if not self.enabled:
+            return {"enabled": False}
+        files = sorted(self.dir.glob("*.jsonl")) if self.dir.exists() else []
+        return {"enabled": True, "failed": self.failed, "dir": str(self.dir), "written": self.written,
+                "days": len(files), "retention_days": self.retention_days,
+                "bytes": sum(f.stat().st_size for f in files)}
+
 
 # What each archived line keeps: enough to re-run translation and cryptanalysis later,
 # without the decoder's raw JSON, which is bulky and adds only signal metadata we already have.
@@ -325,6 +336,7 @@ ARCHIVE_FIELDS = ("id", "ts", "source", "freq", "level", "noise", "errors", "ica
 
 HOT_HOURS = 48  # messages stay as live dicts this long, then go to compact JSON
 WHOLE_STORE_CACHE_SECS = 30  # how long a pass over every message is reused for
+LIVE_MSG_BYTES = 3236  # measured deep size of a message dict, for reporting the split
 
 
 class MemoryStore:
@@ -341,6 +353,8 @@ class MemoryStore:
         self.messages = OrderedDict()  # id -> [ts, msg dict or compact JSON, raw JSON or None]
         self.next_id = 1
         self.compact_cursor = 1
+        self.cold = 0        # entries already re-encoded, counted as they move
+        self.cold_bytes = 0
 
     def add(self, msg, raw):
         msg_id = self.next_id
@@ -367,6 +381,13 @@ class MemoryStore:
                 out.append(msg)
         return out
 
+    def report(self):
+        """How the store is actually holding what it holds, for the stats page."""
+        live = len(self.messages) - self.cold
+        return {"total": len(self.messages), "live": live, "compact": self.cold,
+                "live_bytes": live * LIVE_MSG_BYTES, "compact_bytes": self.cold_bytes,
+                "hot_hours": HOT_HOURS}
+
     def walk(self):
         """Every message held, for whole-store passes. Read-only: hot entries come back live."""
         for entry in self.messages.values():
@@ -386,6 +407,8 @@ class MemoryStore:
                     break
                 if not isinstance(entry[1], str):
                     entry[1] = json.dumps(entry[1], separators=(",", ":"))
+                    self.cold += 1
+                    self.cold_bytes += len(entry[1])
             self.compact_cursor += 1
 
     def purge(self, older_than):
@@ -393,6 +416,9 @@ class MemoryStore:
             msg_id, entry = next(iter(self.messages.items()))
             if entry[0] >= older_than:
                 break
+            if isinstance(entry[1], str):
+                self.cold -= 1
+                self.cold_bytes -= len(entry[1])
             del self.messages[msg_id]
 
 
@@ -857,6 +883,8 @@ class ACARSWeb:
                        "aircraft_tracked": len(self.tracker.aircraft), "uptime": int(now - self.started),
                        "vrs_configured": self.vrs.configured, "vrs_ok": self.vrs.ok, "vrs_aircraft": len(self.vrs.by_icao)},
             "health": self.health.report(),
+            "store": self.store.report(),
+            "archive": self.archive.report(),
             "traffic": await self._whole_store("traffic",
                                                lambda: stats_summary(self.store, self.tracker, self.cfg, now)),
             "ground_stations": self.stations.report(),
