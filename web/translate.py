@@ -813,36 +813,64 @@ SOUTHWEST_SHAPE = (4, 4, 8, 8, 5, 3, 3, 4, 4, 4, 3, 3, 3, 3, 6)
 
 
 def translate_southwest(msg):
-    """Position, altitude, speed, fuel and weight out of a Southwest label 37 report."""
+    """Position, altitude, speed, fuel and weight out of a Southwest label 37 report.
+
+    Only part of the traffic uses the full 15-field record; the rest sends shorter
+    variants of the same data under the same cipher. Rather than matching a shape, the
+    coordinates are found by their signature - eight characters, degrees, a point that
+    is not a digit, then thousandths - which reads every variant."""
     head, _, body = msg["text"].partition("\r\n")
     key = SOUTHWEST_KEYS.get(head[:2])
     if not key or not body:
         return None
     sep, digits = key
-    fields = body.split(sep)
-    if tuple(len(f) for f in fields) != SOUTHWEST_SHAPE:
-        return None
     table = {c: str(i) for i, c in enumerate(digits)}
+    fields = body.replace("\r", "").replace("\n", "").split(sep)
 
     def num(field, *positions):
         out = "".join(table.get(field[p], " ") for p in positions)
         return None if " " in out else out
 
-    # The two coordinate fields carry a hemisphere letter, then degrees, a point, thousandths.
-    lat, lon = num(fields[2], 2, 3, 5, 6, 7), num(fields[3], 1, 2, 3, 5, 6, 7)
-    alt, mach = num(fields[4], *range(5)), num(fields[7], 1, 2, 3)
-    if not (lat and lon and alt and fields[2][4] == fields[3][4]):
+    def coordinate(window, lead):
+        """dd.ddd after `lead` non-digit characters, the point being a non-digit too."""
+        if len(window) != 8 or window[4] in table:
+            return None
+        if any(c in table for c in window[:lead]):
+            return None
+        return num(window, *range(lead, 4), 5, 6, 7)
+
+    lat = lon = point = None
+    for f in fields:
+        for i in range(len(f) - 7):
+            w = f[i:i + 8]
+            if lat is None and coordinate(w, 2):
+                lat, point = coordinate(w, 2), w[4]
+            elif lat is not None and w[4] == point and coordinate(w, 1):
+                lon = coordinate(w, 1)
+                break
+        if lon:
+            break
+    if not (lat and lon):
         return None
     lat, lon = int(lat) / 1000, -int(lon) / 1000
-    tas, fob = num(fields[6], 0, 1, 2), num(fields[8], 0, 1, 3)
-    eta, weight = num(fields[9], *range(4)), num(fields[14], *range(6))
-    summary = f"Position report, {feet(int(alt))}" + (f", Mach {int(mach) / 1000:.3f}" if mach else "")
-    return result("position", summary,
-                  [latlon(lat, lon),
-                   f"True airspeed {int(tas)} kt" if tas else None,
-                   f"Fuel on board {int(fob) * 100:,} lb" if fob else None,
-                   f"ETA {hhmmss(eta)}" if eta and int(eta[:2]) < 24 else None,
-                   f"Gross weight {int(weight):,} lb" if weight else None],
+    details = [latlon(lat, lon)]
+    summary = "Position report"
+    if tuple(len(f) for f in fields) == SOUTHWEST_SHAPE:
+        alt, mach = num(fields[4], *range(5)), num(fields[7], 1, 2, 3)
+        tas, fob = num(fields[6], 0, 1, 2), num(fields[8], 0, 1, 3)
+        eta, weight = num(fields[9], *range(4)), num(fields[14], *range(6))
+        summary += (f", {feet(int(alt))}" if alt else "") + (f", Mach {int(mach) / 1000:.3f}" if mach else "")
+        details += [f"True airspeed {int(tas)} kt" if tas else None,
+                    f"Fuel on board {int(fob) * 100:,} lb" if fob else None,
+                    f"ETA {hhmmss(eta)}" if eta and int(eta[:2]) < 24 else None,
+                    f"Gross weight {int(weight):,} lb" if weight else None]
+    else:
+        # The short variants carry a clock time, and sometimes fuel, in 4-character fields.
+        times = [t for f in fields if len(f) == 4 and (t := num(f, 0, 1, 2, 3)) and int(t[:2]) < 24]
+        fuel = [v for f in fields if len(f) == 4 and f[2] == point and (v := num(f, 0, 1, 3))]
+        details += [f"Reported {hhmmss(times[0])}" if len(times) == 1 else None,
+                    f"Fuel on board {int(fuel[0]) * 100:,} lb" if len(fuel) == 1 else None]
+    return result("position", summary, details,
                   position={"lat": lat, "lon": lon, "src": "Southwest label 37"})
 
 
