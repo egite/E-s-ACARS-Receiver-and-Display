@@ -57,14 +57,15 @@ class Invalid(Exception):
         self.errors = errors
 
 
-def _number(errors, key, value, lo, hi, integer=False):
+def _number(errors, key, value, lo, hi, integer=False, why=None):
     try:
         n = float(value)
     except (TypeError, ValueError):
         errors[key] = "must be a number"
         return None
     if not math.isfinite(n) or not lo <= n <= hi:
-        errors[key] = f"must be between {lo} and {hi}"
+        # A bare range leaves someone who wanted more with no idea why they cannot have it.
+        errors[key] = f"must be between {lo} and {hi}" + (f" - {why}" if why else "")
         return None
     if integer and n != int(n):
         errors[key] = "must be a whole number"
@@ -127,8 +128,12 @@ def validate(new, current):
         errors["vrs_url"] = "must start with http:// or https://"
     out["vrs_feed"] = str(new.get("vrs_feed") or "").strip() or None
     out["vrs_poll_secs"] = _number(errors, "vrs_poll_secs", new.get("vrs_poll_secs"), 1, 300, integer=True)
-    # Beyond HOT_HOURS the store holds messages as compact JSON, so a week fits in memory.
-    out["history_hours"] = _number(errors, "history_hours", new.get("history_hours"), 0.25, 168)
+    # Beyond HOT_HOURS the store holds messages as compact JSON, which is what makes a week
+    # fit. A month would want about 1.4 GB and 120 days about 4.6 GB, so the ceiling is the
+    # machine, not a preference. Longer than this is what the on-disk archive is for.
+    out["history_hours"] = _number(errors, "history_hours", new.get("history_hours"), 0.25, 168,
+                                   why="168 hours is 7 days, as much as this machine can hold in "
+                                       "memory. For longer, raise the archive instead")
     out["max_position_km"] = _number(errors, "max_position_km", new.get("max_position_km"), 10, 20000, integer=True)
     # The archive is on disk, so its limit is disk: a year is around 10 GB at this site's rate.
     archive = new.get("archive") or {}
