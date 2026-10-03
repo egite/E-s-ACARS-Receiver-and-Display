@@ -720,11 +720,14 @@ def translate_label44(msg):
     event = m.group(1)
     pos = pos_detail(msg)
     if event in ("ETA", "POS") and len(parts) >= 8:
-        level = "on the ground" if parts[2] in ("GRD", "***") else f"FL{int(parts[2])}" if parts[2].isdigit() else None
+        # The clear form gives altitude in hundreds of feet, and fuel in the last field.
+        level = "on the ground" if parts[2] in ("GRD", "***") else feet(int(parts[2]) * 100) if parts[2].isdigit() else None
         eta = parts[7][:4] if re.fullmatch(r"\d{4,6}", parts[7]) else None
         summary = ("ETA report" if event == "ETA" else "Position report") + f", {parts[3]} → {parts[4]}"
+        fuel = parts[8] if len(parts) > 8 and re.fullmatch(r"[\d.]+", parts[8]) else None
         return result("flight" if event == "ETA" else "position", summary,
-                      [level, f"ETA {hhmmss(eta)}" if eta else None, pos])
+                      [level, f"ETA {hhmmss(eta)}" if eta else None,
+                       f"Fuel on board {float(fuel) * 1000:,.0f} lb" if fuel else None, pos])
     names = {"OFF": "Took off", "ON": "Landed", "IN": "Arrived at the gate"}
     time = next((p for p in parts[5:] if re.fullmatch(r"\d{4}", p)), None)
     return result("flight", f"{names[event]}: {parts[2]} → {parts[3]}" + (f" at {hhmmss(time)}" if time else ""), [pos])
@@ -914,17 +917,19 @@ BIZJET_KEYS = {
     "06": ('7', 'g. C9)f(:`'),
     "07": (')', '.;40m<UMDk'),
     "08": ('Z', 'LYe}`vaKct'),
+    "09": ('c', '48h6NB,s1Z'),
 }
 BIZJET_SHAPE = (5, 13, 3, 4, 4, 4, 4, 4, 5)
 
 
 def translate_bizjet(msg):
     """Position, altitude and ETA out of a business-aviation label 44 report."""
-    key = BIZJET_KEYS.get(msg["text"][:2])
+    text = msg["text"]
+    key = BIZJET_KEYS.get(text[:2])
     if not key:
         return None
     sep, digits = key
-    fields = msg["text"][2:].split(sep)
+    fields = text[2:].split(sep)
     if tuple(len(f) for f in fields) != BIZJET_SHAPE:
         return None
     table = {c: str(i) for i, c in enumerate(digits)}
