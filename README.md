@@ -253,7 +253,14 @@ arrived, when ADS-B had seen it. That pairing is the point. An unfamiliar airlin
 solvable when its fields can be lined up against a position you already know, and mostly
 guesswork when it cannot: Southwest's label 37 fell to exactly that alignment, while the
 business-aviation label 44 had to be attacked through the format's own constraints because
-almost none of those aircraft had an independent fix. Expect roughly 15-20 MB a day.
+almost none of those aircraft had an independent fix.
+
+Measured here it runs about 26 MB a day, so a month is 0.8 GB and the 120 days this receiver
+keeps is roughly 3 GB. Weeks rather than days is the useful unit: the attack on an obfuscated
+format needs tens of examples per cipher key, and label 44 cycles through nine of them, so
+its groups accumulate only around eight records a day each. Trained on 28 and tested on what
+it had not seen, that attack scores 66% against a 78% ceiling — still climbing, which is what
+the retention is for.
 
 The decoder's raw JSON is not archived — it is bulky and carries only signal metadata that is
 already on the line.
