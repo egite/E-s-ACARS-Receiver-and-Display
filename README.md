@@ -193,6 +193,28 @@ print(f"{generic} messages without a specific translation (counted before block 
 EOF
 ```
 
+## Airport data
+
+`web/airports.json` is 32,000 airports with ICAO code, IATA code, name, position and a
+rank, built by `tools/update_airports.py` from the public-domain OurAirports dataset.
+Like the airline table it is committed, so the server never needs network access.
+
+It exists for the decoding work. Several airline formats carry origin and destination as
+ICAO codes, and in the obfuscated ones those fields only give way to a dictionary attack -
+the digits fall out of the format's own structure, but the letters need a dictionary, and
+scoring against codes harvested from our own traffic was not good enough. It cannot tell a
+wrong letter from an airport this receiver has never heard from, so a Southwest flight
+decoded contentedly into Flying Cloud and Hays Regional and the score went up.
+
+The rank (1-3 for small, medium, large, plus 4 for scheduled airline service) is what makes
+the dictionary sharp: KDTW outranks KDET seven to two. The coordinates matter more still,
+because they replace "is this a real code" with "does this route pass near where the
+aircraft actually was" - and that has a measurable ceiling. Over the business-aviation
+reports that carry origin and destination in clear, the aircraft sits within 100 km of its
+own great circle 78% of the time; real flights deviate, so 78% is what a perfect decode
+scores, not 100%. Shuffling positions against routes gives 41%. Those two numbers are what
+any attempt on the letters has to be judged between.
+
 ## Keeping messages
 
 Two separate things hold on to traffic, and they answer different questions.
@@ -277,6 +299,7 @@ tools/calibrate_ppm.py measure a dongle's tuning error using dumpvdl2
 tools/update_airlines.py  rebuild web/airlines.json from Wikipedia's list of airline codes
 tests/corpus.jsonl     real messages for translation testing
 archive/messages/      archived traffic, one JSONL file per day (not in git)
+web/airports.json      ICAO airport table built by tools/update_airports.py
 screenshots/           images for this README
 third_party/           acarsdec, dumpvdl2, libacars (created by install.sh, not in git)
 ```
