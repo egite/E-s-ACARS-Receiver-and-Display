@@ -40,6 +40,8 @@ def editable(cfg):
         "vrs_feed": cfg.get("vrs_feed"),
         "vrs_poll_secs": cfg.get("vrs_poll_secs", 5),
         "history_hours": cfg.get("history_hours", 2),
+        "archive": {k: (cfg.get("archive") or {}).get(k, d)
+                    for k, d in (("enabled", False), ("retention_days", 7))},
         "max_position_km": cfg.get("max_position_km", 1000),
         "health": {
             "silence_minutes": {name: silence.get(name, d) for name, d in (("acars", 30), ("vdl2", 5))},
@@ -128,6 +130,11 @@ def validate(new, current):
     # Beyond HOT_HOURS the store holds messages as compact JSON, so a week fits in memory.
     out["history_hours"] = _number(errors, "history_hours", new.get("history_hours"), 0.25, 168)
     out["max_position_km"] = _number(errors, "max_position_km", new.get("max_position_km"), 10, 20000, integer=True)
+    # The archive is on disk, so its limit is disk: a year is around 10 GB at this site's rate.
+    archive = new.get("archive") or {}
+    out["archive"] = {"enabled": bool(archive.get("enabled")),
+                      "retention_days": _number(errors, "archive.retention_days",
+                                                archive.get("retention_days"), 1, 365, integer=True)}
 
     health = new.get("health") or {}
     silence = health.get("silence_minutes") or {}
@@ -154,6 +161,7 @@ def merge(file_cfg, clean):
         cfg["receivers"][name] = {**old, **{k: v for k, v in rx.items() if _same(k, shown[name][k], v) is False}}
     for key in ("vrs_url", "vrs_feed", "vrs_poll_secs", "history_hours", "max_position_km"):
         cfg[key] = clean[key]
+    cfg["archive"] = {**(cfg.get("archive") or {}), **clean["archive"]}
     health = cfg.get("health") or {}
     cfg["health"] = {**health, **clean["health"],
                      "silence_minutes": {**(health.get("silence_minutes") or {}), **clean["health"]["silence_minutes"]}}

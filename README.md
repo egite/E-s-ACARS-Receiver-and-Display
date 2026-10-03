@@ -240,7 +240,9 @@ dicts would be roughly 1.2 GB, where the mixed form is around 500 MB. The cost i
 whole-store passes — the stats page, the Message types dialog — have to parse the cold part,
 so they get slower the further back you keep.
 
-`archive` is the durable record, and it survives restarts:
+`archive` is the durable record, and it survives restarts. Both it and `history_hours` are
+on the Settings page, next to each other, because they are easy to mistake for one another:
+one is hours of memory that a restart empties, the other is days of disk that outlive it.
 
 ```json
 "archive": { "enabled": true, "dir": "archive/messages", "retention_days": 7 }

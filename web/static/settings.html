@@ -34,11 +34,13 @@
 
     <h2 class="section-title">History &amp; health</h2>
     <section class="rx-card form-grid">
-      <label class="field"><span>Keep messages for</span><input name="history_hours" inputmode="decimal"><small>hours, in memory only; longer uses more RAM</small></label>
+      <label class="field"><span>Keep messages for</span><input name="history_hours" inputmode="decimal"><small>hours, in memory only; lost on restart</small></label>
+      <label class="field"><span>Keep the archive for</span><input name="archive.retention_days" inputmode="numeric"><small>days on disk; about 26 MB a day here</small></label>
       <label class="field"><span>ACARS silence alert</span><input name="health.silence_minutes.acars" inputmode="numeric"><small>minutes without a frame</small></label>
       <label class="field"><span>VDL2 silence alert</span><input name="health.silence_minutes.vdl2" inputmode="numeric"><small>minutes without a frame</small></label>
       <label class="field"><span>ppm tolerance</span><input name="health.ppm_tolerance" inputmode="decimal"><small>warn (and auto-correct) beyond this</small></label>
       <label class="field check wide"><input type="checkbox" name="health.auto_ppm"><span>Auto-correct VDL2 ppm<small>after 30 min of steady drift; restarts the VDL2 decoder</small></span></label>
+      <label class="field check wide"><input type="checkbox" name="archive.enabled"><span>Archive every message to disk<small>one file per day under archive/messages, each line with the ADS-B fix at the time</small></span></label>
     </section>
 
     <p class="muted small">Ports, decoder binaries, sample rates and the librtlsdr preload are edited in <code id="config-path">config.json</code>.</p>

@@ -334,6 +334,18 @@ class Archive:
             log.error("archive disabled after write error: %s", exc)
             self.failed = True
 
+    def reload(self, conf):
+        """Apply a change from the settings page without a restart. Re-opening on the next
+        message is what applies a new directory, and prunes to a shortened retention."""
+        self.enabled = bool(conf.get("enabled"))
+        path = Path(conf.get("dir") or "archive/messages")
+        self.dir = path if path.is_absolute() else HERE.parent / path
+        self.retention_days = max(1, int(conf.get("retention_days") or 7))
+        self.failed = False
+        self.close()
+        self.day = None
+        log.info("archive now %s, keeping %d days", "on" if self.enabled else "off", self.retention_days)
+
     def close(self):
         if self.handle:
             self.handle.flush()
@@ -948,8 +960,10 @@ class ACARSWeb:
         log.info("settings saved from the web page")
 
         vrs_changed = (before.get("vrs_url"), before.get("vrs_feed")) != (after.get("vrs_url"), after.get("vrs_feed"))
-        for key in ("home", "vrs_url", "vrs_feed", "vrs_poll_secs", "history_hours", "max_position_km"):
+        for key in ("home", "vrs_url", "vrs_feed", "vrs_poll_secs", "history_hours", "max_position_km", "archive"):
             self.cfg[key] = after[key]
+        if (before.get("archive") or {}) != after["archive"]:
+            self.archive.reload(after["archive"])
         if vrs_changed:  # don't keep showing aircraft from the old feed
             self.vrs.by_icao, self.vrs.by_reg, self.vrs.by_call = {}, {}, {}
             self.vrs.ok, self.vrs.error = False, None
