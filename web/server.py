@@ -388,9 +388,14 @@ class MemoryStore:
                 "live_bytes": live * LIVE_MSG_BYTES, "compact_bytes": self.cold_bytes,
                 "hot_hours": HOT_HOURS}
 
-    def walk(self):
+    def snapshot(self):
+        """The entries as a plain list. Must be taken on the event loop thread: a worker
+        iterating self.messages directly races every arriving message."""
+        return list(self.messages.values())
+
+    def walk(self, entries=None):
         """Every message held, for whole-store passes. Read-only: hot entries come back live."""
-        for entry in self.messages.values():
+        for entry in (self.messages.values() if entries is None else entries):
             yield self._msg(entry)
 
     def recent(self, limit):
@@ -859,17 +864,26 @@ class ACARSWeb:
     async def _whole_store(self, name, work):
         """Run a pass over every message off the event loop, and not more often than
         WHOLE_STORE_CACHE_SECS. At a week of history these touch a few hundred thousand
-        messages and take seconds; inline they would stall every other request."""
+        messages and take seconds; inline they would stall every other request.
+
+        The collections are snapshotted here rather than in the worker. Both grow as
+        messages arrive, and a worker thread iterating them directly dies on the next
+        arrival with "dict mutated during iteration" - which is what took the stats page
+        down. Copying the references is cheap next to the parsing and aggregation, and
+        there is no await between the two snapshots, so they cannot change underneath us.
+        """
         hit = self._store_scans.get(name)
         if hit and time.time() - hit[0] < WHOLE_STORE_CACHE_SECS:
             return hit[1]
-        value = await asyncio.to_thread(work)
+        entries, aircraft = self.store.snapshot(), list(self.tracker.aircraft.values())
+        value = await asyncio.to_thread(work, entries, aircraft)
         self._store_scans[name] = (time.time(), value)
         return value
 
     async def type_counts(self, request):
         """How many messages of each type are in memory, for the Message types dialog."""
-        counts = await self._whole_store("types", lambda: Counter(msg["type"] for msg in self.store.walk()))
+        counts = await self._whole_store(
+            "types", lambda entries, _aircraft: Counter(msg["type"] for msg in self.store.walk(entries)))
         return web.json_response({"types": MESSAGE_TYPES, "counts": counts,
                                   "history_hours": self.cfg["history_hours"]})
 
@@ -885,8 +899,9 @@ class ACARSWeb:
             "health": self.health.report(),
             "store": self.store.report(),
             "archive": self.archive.report(),
-            "traffic": await self._whole_store("traffic",
-                                               lambda: stats_summary(self.store, self.tracker, self.cfg, now)),
+            "traffic": await self._whole_store(
+                "traffic", lambda entries, aircraft: stats_summary(self.store, self.tracker, self.cfg, now,
+                                                                   entries, aircraft)),
             "ground_stations": self.stations.report(),
         })
 

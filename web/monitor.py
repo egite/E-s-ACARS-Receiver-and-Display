@@ -295,13 +295,16 @@ class WeatherStore:
         return [o for ts, o in self.obs if o["ts"] >= cutoff]
 
 
-def stats_summary(store, tracker, cfg, now):
-    """Traffic breakdowns for the stats page, computed from the messages in memory."""
+def stats_summary(store, tracker, cfg, now, entries=None, aircraft=None):
+    """Traffic breakdowns for the stats page, computed from the messages in memory.
+
+    entries and aircraft are snapshots taken by the caller on the event loop; this runs in
+    a worker thread and must not iterate the live collections, which keep growing."""
     bucket_secs = 300
     start = now - cfg["history_hours"] * 3600
     buckets = {}
     freqs, airlines, types = {}, Counter(), Counter()
-    for msg in store.walk():
+    for msg in store.walk(entries):
         if msg["ts"] < start:
             continue
         content = msg["type"].split(":")[1] not in ("linktest", "status", "partial", "ack", "handoff", "connection", "network")
@@ -325,7 +328,7 @@ def stats_summary(store, tracker, cfg, now):
         levels = f.pop("levels")
         freq_rows.append({**f, "avg_level": round(statistics.fmean(levels), 1) if levels else None})
     operators = {}
-    for a in tracker.aircraft.values():
+    for a in (tracker.aircraft.values() if aircraft is None else aircraft):
         v = tracker.vrs.by_icao.get(a.get("icao") or "") or {}
         if a.get("flight") and (v.get("OpIcao") or v.get("Op")):
             operators.setdefault(a["flight"][:2], Counter())[(v.get("OpIcao") or None, v.get("Op"))] += 1
