@@ -199,7 +199,13 @@ EOF
 rank, built by `tools/update_airports.py` from the public-domain OurAirports dataset.
 Like the airline table it is committed, so the server never needs network access.
 
-It exists for the decoding work. Several airline formats carry origin and destination as
+Routes in decoded messages are named from it - "Flight KSLC Salt Lake City → KDEN Denver"
+rather than two codes. Four-letter ICAO codes are named wherever they appear in text the
+decoders wrote; three-letter IATA codes only either side of a route arrow, because ETA,
+FOB and TAS are not airports. Anything inside the quotes of a crew message is left exactly
+as the crew typed it.
+
+The table is also there for the decoding work. Several airline formats carry origin and destination as
 ICAO codes, and in the obfuscated ones those fields only give way to a dictionary attack -
 the digits fall out of the format's own structure, but the letters need a dictionary, and
 scoring against codes harvested from our own traffic was not good enough. It cannot tell a
@@ -300,6 +306,7 @@ tools/update_airlines.py  rebuild web/airlines.json from Wikipedia's list of air
 tests/corpus.jsonl     real messages for translation testing
 archive/messages/      archived traffic, one JSONL file per day (not in git)
 web/airports.json      ICAO airport table built by tools/update_airports.py
+web/airports.py        looks a code up in it, loaded lazily
 screenshots/           images for this README
 third_party/           acarsdec, dumpvdl2, libacars (created by install.sh, not in git)
 ```

@@ -9,7 +9,10 @@ plaintext was not good enough - it cannot tell a wrong letter from an airport th
 receiver has simply never heard from, so a Southwest flight decoded happily to Flying
 Cloud and Hays Regional and the score went up.
 
-Each row is [icao, iata, name, lat, lon, rank]. The rank is what makes the dictionary
+Each row is [icao, iata, name, city, lat, lon, rank]. The city is for display - a decoded
+route reads better as "KSLC Salt Lake City -> KJFK New York" than as two codes - and comes
+from the dataset's municipality, cut at any parenthetical so Paris does not arrive as
+"Paris (Roissy-en-France, Val-d'Oise)". The rank is what makes the dictionary
 sharp rather than merely large: 1-3 for small, medium and large, plus 4 if the airport has
 scheduled airline service. KDTW outranks KDET 7 to 2, which is the difference between
 decoding a Southwest flight into Detroit Metropolitan and into Coleman A. Young Municipal.
@@ -49,8 +52,10 @@ def main():
         if row["type"] not in SIZE or len(code) != 4 or not code.isalnum() or not row["latitude_deg"]:
             continue
         rank = SIZE[row["type"]] + (4 if row["scheduled_service"] == "yes" else 0)
+        city = (row["municipality"] or "").split(" (")[0].strip()[:28]
         airports.append([code, (row["iata_code"] or "").strip().upper() or None, row["name"][:48],
-                         round(float(row["latitude_deg"]), 3), round(float(row["longitude_deg"]), 3), rank])
+                         city or None, round(float(row["latitude_deg"]), 3),
+                         round(float(row["longitude_deg"]), 3), rank])
     airports.sort()
     OUT.write_text("[\n" + ",\n".join(json.dumps(a, ensure_ascii=False) for a in airports) + "\n]\n")
     print(f"{len(airports)} airports -> {OUT}")

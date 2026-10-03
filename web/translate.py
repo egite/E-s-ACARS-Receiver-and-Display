@@ -11,6 +11,7 @@ described by what kind of message it is, and the original text stays available.
 message_type(msg) files each message under one entry of MESSAGE_TYPES (per source), which is
 what the "Message types" dialog lets people pick from.
 """
+import airports
 import re
 
 # (type, label, description, shown by default, sources it can occur on)
@@ -202,12 +203,51 @@ def digit_ratio(text):
     return sum(c.isdigit() for c in t) / len(t) if t else 0
 
 
+# A four-letter token in text we generated ourselves is an ICAO code; one inside the
+# quotes of a crew message is whatever the crew typed, and is left alone.
+ICAO_TOKEN = re.compile(r"(?<![A-Z0-9])([A-Z]{4})(?![A-Z0-9])")
+# Three letters are too common in aviation shorthand (ETA, FOB, TAS) to name on sight, so
+# IATA codes are only recognised either side of a route arrow, where nothing else appears.
+IATA_ROUTE = re.compile(r"(?<![A-Z0-9])([A-Z]{3}) → ([A-Z]{3})(?![A-Z0-9])")
+QUOTED = re.compile(r"“[^”]*”")
+
+
+def name_airports(text):
+    """Put the town after an ICAO code, so a route reads as places rather than codes."""
+    if not text:
+        return text
+    out, at = [], 0
+    for quote in QUOTED.finditer(text):           # step over the crew's own words
+        out.append(_name(text[at:quote.start()]))
+        out.append(quote.group(0))
+        at = quote.end()
+    out.append(_name(text[at:]))
+    return "".join(out)
+
+
+def _name(part):
+    return IATA_ROUTE.sub(_route, ICAO_TOKEN.sub(_city, part))
+
+
+def _city(match):
+    town = airports.city(match.group(1))
+    return f"{match.group(1)} {town}" if town else match.group(1)
+
+
+def _route(match):
+    def one(code):
+        town = airports.city_iata(code)
+        return f"{code} {town}" if town else code
+    return f"{one(match.group(1))} → {one(match.group(2))}"
+
+
 def result(category, summary, details=None, generic=False, position=None):
     """generic=True marks fallback descriptions that didn't recognise the message format.
 
     position is for formats whose coordinates only appear once decoded, so parse_position
     can't see them in the raw text; the server range-checks it before using it."""
-    out = {"category": category, "summary": summary, "details": [d for d in (details or []) if d]}
+    out = {"category": category, "summary": name_airports(summary),
+           "details": [name_airports(d) for d in (details or []) if d]}
     if position:
         out["position"] = position
     if generic:
