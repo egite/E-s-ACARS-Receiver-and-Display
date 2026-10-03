@@ -12,7 +12,8 @@ Cloud and Hays Regional and the score went up.
 Each row is [icao, iata, name, city, lat, lon, rank]. The city is for display - a decoded
 route reads better as "KSLC Salt Lake City -> KJFK New York" than as two codes - and comes
 from the dataset's municipality, cut at any parenthetical so Paris does not arrive as
-"Paris (Roissy-en-France, Val-d'Oise)". The rank is what makes the dictionary
+"Paris (Roissy-en-France, Val-d'Oise)", and shortened on a word boundary so a long one
+does not end mid-word. The rank is what makes the dictionary
 sharp rather than merely large: 1-3 for small, medium and large, plus 4 if the airport has
 scheduled airline service. KDTW outranks KDET 7 to 2, which is the difference between
 decoding a Southwest flight into Detroit Metropolitan and into Coleman A. Young Municipal.
@@ -45,6 +46,15 @@ def fetch():
         return resp.read().decode("utf-8")
 
 
+def trim(city, limit=28):
+    """Keep a town short without cutting it mid-word: Fayetteville/Springdale/Rogers
+    becomes Fayetteville/Springdale, not Fayetteville/Springdale/Roge."""
+    if len(city) <= limit:
+        return city
+    cut = max(city.rfind("/", 0, limit + 1), city.rfind(" ", 0, limit + 1))
+    return (city[:cut] if cut > 0 else city[:limit]).rstrip(" /,-")
+
+
 def main():
     airports = []
     for row in csv.DictReader(io.StringIO(fetch())):
@@ -52,7 +62,7 @@ def main():
         if row["type"] not in SIZE or len(code) != 4 or not code.isalnum() or not row["latitude_deg"]:
             continue
         rank = SIZE[row["type"]] + (4 if row["scheduled_service"] == "yes" else 0)
-        city = (row["municipality"] or "").split(" (")[0].strip()[:28]
+        city = trim((row["municipality"] or "").split(" (")[0].strip())
         airports.append([code, (row["iata_code"] or "").strip().upper() or None, row["name"][:48],
                          city or None, round(float(row["latitude_deg"]), 3),
                          round(float(row["longitude_deg"]), 3), rank])

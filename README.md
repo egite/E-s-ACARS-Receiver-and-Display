@@ -199,6 +199,12 @@ EOF
 rank, built by `tools/update_airports.py` from the public-domain OurAirports dataset.
 Like the airline table it is committed, so the server never needs network access.
 
+The route line on each flight card is named from it too. That one comes from VRS rather
+than from a message, and VRS sends the whole thing - "GRR Gerald R. Ford, Grand Rapids,
+United States" - but not consistently: where it has no separate town the airport's full
+name occupies that slot, which is how "IAH George Bush Intercontinental Houston" turns up.
+The server looks the code up in the table first and falls back to what VRS sent.
+
 Routes in decoded messages are named from it - "Flight KSLC Salt Lake City → KDEN Denver"
 rather than two codes. Four-letter ICAO codes are named wherever they appear in text the
 decoders wrote; three-letter IATA codes only either side of a route arrow, because ETA,

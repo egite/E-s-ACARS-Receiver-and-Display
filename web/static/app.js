@@ -96,8 +96,11 @@ function collapseRepeats(entries) {
   return out;
 }
 
-function airportCode(s) {
-  return s ? s.split(" ")[0] : "";
+// The server resolves the VRS route line - "GRR Gerald R. Ford, Grand Rapids, United
+// States" - down to "GRR Grand Rapids" against the airport table. The raw field is the
+// fallback, trimmed to its code, so a card still reads if that lookup found nothing.
+function airportLabel(resolved, raw) {
+  return resolved || (raw ? raw.split(" ")[0] : "");
 }
 function acSource(ac) {
   const a = ac.counts?.ACARS || 0, v = ac.counts?.VDL2 || 0;
@@ -142,7 +145,7 @@ function popupHtml(ac) {
   return `<b>${esc(displayName(ac))}</b> ${esc(ac.reg || "")}<br>` +
     (v.Mdl || v.Type ? `${esc(v.Mdl || v.Type)}<br>` : "") +
     (v.Op ? `${esc(v.Op)}<br>` : "") +
-    (v.From || v.To ? `${esc(airportCode(v.From))} → ${esc(airportCode(v.To))}<br>` : "") +
+    (v.From || v.To ? `${esc(airportLabel(v.from, v.From))} → ${esc(airportLabel(v.to, v.To))}<br>` : "") +
     (p ? `${p.alt != null ? num(p.alt) + " ft · " : ""}${esc(p.src)}${p.src !== "ADS-B (VRS)" ? " " + ago(p.ts) : ""}<br>` : "") +
     (latest ? `<i>${esc(latest.summary)}</i>` : "");
 }
@@ -253,7 +256,7 @@ function flightHeaderHtml(ac) {
   const kin = [alt, v.Spd != null ? `${Math.round(v.Spd)} kt` : null,
     v.Vsi ? `${v.Vsi > 0 ? "↑" : "↓"}${num(Math.abs(v.Vsi))} fpm` : null, v.Sqk ? `squawk ${v.Sqk}` : null].filter(Boolean).join(" · ");
   const typeLine = [v.Mdl || v.Type, v.Op].filter(Boolean).join(" · ");
-  const route = v.From || v.To ? `${esc(airportCode(v.From) || "?")} → ${esc(airportCode(v.To) || "?")}` : "";
+  const route = v.From || v.To ? `${esc(airportLabel(v.from, v.From) || "?")} → ${esc(airportLabel(v.to, v.To) || "?")}` : "";
   const flightAlias = ac.callsign && ac.flight && ac.callsign !== ac.flight ? `<span class="reg">${esc(ac.flight)}</span>` : "";
   const emergency = emergencyOf(ac);
   const flags = (emergency ? `<span class="sq-badge">🚨 Squawk ${esc(emergency.squawk)} · ${esc(emergency.meaning)}</span>` : "") +

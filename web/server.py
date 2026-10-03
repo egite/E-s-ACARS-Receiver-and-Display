@@ -19,6 +19,7 @@ from pathlib import Path
 import aiohttp
 from aiohttp import web
 
+import airports
 import settings
 from airlines import IATA_TO_ICAO
 from monitor import GroundStations, HealthMonitor, WeatherStore, process_memory_mb, stats_summary
@@ -63,6 +64,25 @@ def flight_to_callsign(flight):
     if not m or m.group(1) not in IATA_TO_ICAO:
         return None
     return IATA_TO_ICAO[m.group(1)] + m.group(2)
+
+
+def route_town(value):
+    """The town for one end of the VRS route line, as "IAH Houston".
+
+    VRS writes these as "GRR Gerald R. Ford, Grand Rapids, United States", but not always:
+    where it has no separate town the whole airport name occupies that slot, and "IAH George
+    Bush Intercontinental Houston" is too long for a card header. The airport table is
+    already loaded for naming decoded routes, so the code is looked up there first and what
+    VRS sent is only the fallback.
+    """
+    if not value:
+        return None
+    code = value.split(" ")[0]
+    town = airports.city_iata(code)
+    if not town:
+        parts = [p.strip() for p in value[len(code):].split(",") if p.strip()]
+        town = parts[-2] if len(parts) > 1 else None
+    return f"{code} {town}" if town else code
 
 
 def haversine_km(lat1, lon1, lat2, lon2):
@@ -707,9 +727,10 @@ class Tracker:
             "last_label": a["last_label"], "last_source": a["last_source"], "gs": a["gs"],
             "recent": sorted((r for entries in a["recent"].values() for r in entries), key=lambda r: -r["id"]),
             "type_last": a["type_last"],
-            "vrs": {k: v[k] for k in ("Type", "Mdl", "Man", "Op", "OpIcao", "From", "To", "Year", "Cou",
-                                      "Alt", "GAlt", "Spd", "Trak", "Vsi", "Sqk", "Gnd", "Mil", "Mlat", "WTC", "Help")
-                    if k in v} or None,
+            "vrs": {**{k: v[k] for k in ("Type", "Mdl", "Man", "Op", "OpIcao", "From", "To", "Year", "Cou",
+                                          "Alt", "GAlt", "Spd", "Trak", "Vsi", "Sqk", "Gnd", "Mil", "Mlat", "WTC", "Help")
+                        if k in v},
+                    **{k.lower(): t for k in ("From", "To") if (t := route_town(v.get(k)))}} or None,
             "position": None,
         }
         if "Lat" in v and "Long" in v:
