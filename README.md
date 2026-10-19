@@ -211,6 +211,13 @@ decoders wrote; three-letter IATA codes only either side of a route arrow, becau
 FOB and TAS are not airports. Anything inside the quotes of a crew message is left exactly
 as the crew typed it.
 
+`tools/crack_routes.py` is the attack on those fields, and more usefully the honest way to
+score it: alphabets are fitted on 80% of a key group's reports and measured on the other
+20%, between a ceiling of 78% (what known-true routes score, because real flights deviate
+from their great circle) and a floor of 41% (positions shuffled against routes). Fitting and
+scoring on the same reports flatters the answer badly - an early version read 71% that way
+and 66% held out.
+
 The table is also there for the decoding work. Several airline formats carry origin and destination as
 ICAO codes, and in the obfuscated ones those fields only give way to a dictionary attack -
 the digits fall out of the format's own structure, but the letters need a dictionary, and
@@ -321,6 +328,7 @@ web/static/            the web pages
 tools/calibrate_ppm.py measure a dongle's tuning error using dumpvdl2
 tools/update_airlines.py  rebuild web/airlines.json from Wikipedia's list of airline codes
 tests/corpus.jsonl     real messages for translation testing
+tools/crack_routes.py  the attack on the obfuscated route fields, and how to score it
 archive/messages/      archived traffic, one JSONL file per day (not in git)
 web/airports.json      ICAO airport table built by tools/update_airports.py
 web/airports.py        looks a code up in it, loaded lazily
