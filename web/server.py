@@ -11,6 +11,7 @@ import logging
 import math
 import os
 import re
+import sys
 import time
 from collections import Counter, OrderedDict, deque
 from datetime import UTC, datetime
@@ -369,6 +370,7 @@ ARCHIVE_FIELDS = ("id", "ts", "source", "freq", "level", "noise", "errors", "ica
 HOT_HOURS = 48  # messages stay as live dicts this long, then go to compact JSON
 WHOLE_STORE_CACHE_SECS = 30  # how long a pass over every message is reused for
 LIVE_MSG_BYTES = 3236  # measured deep size of a message dict, for reporting the split
+ROW_BYTES = 112  # a compact entry's stats row: 6-tuple plus its level float
 
 
 class MemoryStore:
@@ -379,10 +381,17 @@ class MemoryStore:
     is around 1.2 GB, more than this Pi has. Past HOT_HOURS an entry is re-encoded as
     compact JSON, 6x smaller, and parsed back only when something asks for it, which for
     messages that old is rare. Keeping a week costs roughly 500 MB rather than 1.2 GB.
+
+    The stats page and the Message types dialog walk every message held. Parsing 300k
+    compact entries for that took 30 s on a week of traffic - as long as the result was
+    cached for, so with the page refreshing every 15 s the scans stacked up and the page
+    never came back. So each compacted entry also keeps a stats row: the six fields those
+    passes read, as a tuple of mostly shared objects, about 110 bytes. A pass then touches
+    no JSON at all and takes well under a second.
     """
 
     def __init__(self):
-        self.messages = OrderedDict()  # id -> [ts, msg dict or compact JSON, raw JSON or None]
+        self.messages = OrderedDict()  # id -> [ts, msg dict or compact JSON, raw JSON or None, stats row or None]
         self.next_id = 1
         self.compact_cursor = 1
         self.cold = 0        # entries already re-encoded, counted as they move
@@ -394,12 +403,22 @@ class MemoryStore:
         msg["id"] = msg_id
         # Original JSON is kept compact, and not at all for link-layer frames, to keep memory down.
         raw_json = json.dumps(raw, separators=(",", ":")) if msg["kind"] not in ("link", "partial") else None
-        self.messages[msg_id] = [msg["ts"], msg, raw_json]
+        self.messages[msg_id] = [msg["ts"], msg, raw_json, None]
         return msg_id
 
     @staticmethod
     def _msg(entry):
-        return json.loads(entry[1]) if isinstance(entry[1], str) else entry[1]
+        held = entry[1]  # read once: compact() on the event loop may swap the dict for its JSON under us
+        return json.loads(held) if isinstance(held, str) else held
+
+    @staticmethod
+    def row(msg):
+        """The fields the whole-store passes read, as a tuple:
+        (ts, source, type, freq, level, airline code). Strings are interned so the
+        300k rows of a week share a few dozen objects between them."""
+        flight, freq = msg.get("flight"), msg.get("freq")
+        return (msg["ts"], sys.intern(msg["source"]), sys.intern(msg["type"]),
+                round(freq, 3) if freq is not None else None, msg.get("level"), sys.intern(flight[:2]) if flight else None)
 
     def get(self, ids, keep_raw=False):
         out = []
@@ -417,7 +436,7 @@ class MemoryStore:
         """How the store is actually holding what it holds, for the stats page."""
         live = len(self.messages) - self.cold
         return {"total": len(self.messages), "live": live, "compact": self.cold,
-                "live_bytes": live * LIVE_MSG_BYTES, "compact_bytes": self.cold_bytes,
+                "live_bytes": live * LIVE_MSG_BYTES, "compact_bytes": self.cold_bytes + self.cold * ROW_BYTES,
                 "hot_hours": HOT_HOURS}
 
     def snapshot(self):
@@ -429,6 +448,13 @@ class MemoryStore:
         """Every message held, for whole-store passes. Read-only: hot entries come back live."""
         for entry in (self.messages.values() if entries is None else entries):
             yield self._msg(entry)
+
+    def rows(self, entries=None):
+        """A stats row (see row()) for every message held, without parsing any JSON: compact
+        entries carry theirs, live entries are read directly. For whole-store passes."""
+        for entry in (self.messages.values() if entries is None else entries):
+            row = entry[3]
+            yield row if row is not None else self.row(self._msg(entry))
 
     def recent(self, limit):
         ids = list(reversed(self.messages))[:limit]
@@ -443,6 +469,7 @@ class MemoryStore:
                 if entry[0] >= older_than:
                     break
                 if not isinstance(entry[1], str):
+                    entry[3] = self.row(entry[1])  # before the JSON swap, so a concurrent rows() never sees neither
                     entry[1] = json.dumps(entry[1], separators=(",", ":"))
                     self.cold += 1
                     self.cold_bytes += len(entry[1])
@@ -763,7 +790,8 @@ class ACARSWeb:
         self.cfg = cfg
         self.store = MemoryStore()
         self.archive = Archive(self.cfg)
-        self._store_scans = {}  # name -> (computed at, value), see _whole_store
+        self._store_scans = {}  # name -> (valid until, value), see _whole_store
+        self._store_scanning = {}  # name -> task running that pass right now, shared by waiting requests
         self.vrs = VRS(cfg)
         self.tracker = Tracker(cfg, self.vrs)
         self.clients = set()
@@ -897,26 +925,45 @@ class ACARSWeb:
     async def _whole_store(self, name, work):
         """Run a pass over every message off the event loop, and not more often than
         WHOLE_STORE_CACHE_SECS. At a week of history these touch a few hundred thousand
-        messages and take seconds; inline they would stall every other request.
+        messages; inline they would stall every other request.
+
+        Requests arriving while a pass is running wait for that one rather than starting
+        their own. Without this, a pass that ran longer than the cache lived meant each
+        15 s page refresh added another thread parsing the whole store, and the page never
+        caught up. The result is also kept for at least ten times as long as it took to
+        compute, so a slow pass can never be most of what the server does.
 
         The collections are snapshotted here rather than in the worker. Both grow as
         messages arrive, and a worker thread iterating them directly dies on the next
         arrival with "dict mutated during iteration" - which is what took the stats page
-        down. Copying the references is cheap next to the parsing and aggregation, and
-        there is no await between the two snapshots, so they cannot change underneath us.
+        down. Copying the references is cheap next to the aggregation, and there is no
+        await between the two snapshots, so they cannot change underneath us.
         """
         hit = self._store_scans.get(name)
-        if hit and time.time() - hit[0] < WHOLE_STORE_CACHE_SECS:
+        if hit and time.time() < hit[0]:
             return hit[1]
-        entries, aircraft = self.store.snapshot(), list(self.tracker.aircraft.values())
-        value = await asyncio.to_thread(work, entries, aircraft)
-        self._store_scans[name] = (time.time(), value)
-        return value
+        running = self._store_scanning.get(name)
+        if running is None:
+            running = self._store_scanning[name] = asyncio.ensure_future(self._scan(name, work))
+        return await running
+
+    async def _scan(self, name, work):
+        try:
+            started = time.time()
+            entries, aircraft = self.store.snapshot(), list(self.tracker.aircraft.values())
+            value = await asyncio.to_thread(work, entries, aircraft)
+            took = time.time() - started
+            if took > 2:
+                log.warning("%s pass over %d messages took %.1f s", name, len(entries), took)
+            self._store_scans[name] = (time.time() + max(WHOLE_STORE_CACHE_SECS, 10 * took), value)
+            return value
+        finally:
+            del self._store_scanning[name]
 
     async def type_counts(self, request):
         """How many messages of each type are in memory, for the Message types dialog."""
         counts = await self._whole_store(
-            "types", lambda entries, _aircraft: Counter(msg["type"] for msg in self.store.walk(entries)))
+            "types", lambda entries, _aircraft: Counter(row[2] for row in self.store.rows(entries)))
         return web.json_response({"types": MESSAGE_TYPES, "counts": counts,
                                   "history_hours": self.cfg["history_hours"]})
 

@@ -295,33 +295,46 @@ class WeatherStore:
         return [o for ts, o in self.obs if o["ts"] >= cutoff]
 
 
+LINK_TYPES = frozenset(("linktest", "status", "partial", "ack", "handoff", "connection", "network"))
+
+
 def stats_summary(store, tracker, cfg, now, entries=None, aircraft=None):
     """Traffic breakdowns for the stats page, computed from the messages in memory.
 
     entries and aircraft are snapshots taken by the caller on the event loop; this runs in
-    a worker thread and must not iterate the live collections, which keep growing."""
+    a worker thread and must not iterate the live collections, which keep growing. It reads
+    the store's stats rows, not the messages, so nothing is parsed along the way: at a week
+    of traffic this is the difference between a second and half a minute."""
     bucket_secs = 300
     start = now - cfg["history_hours"] * 3600
-    buckets = {}
+    buckets = {}  # bucket index -> {"SOURCE:content"/"SOURCE:link": n}
     freqs, airlines, types = {}, Counter(), Counter()
-    for msg in store.walk(entries):
-        if msg["ts"] < start:
+    per_type = {}  # type -> (is content, bucket label); the type names its source, so this is done 26 times, not 400k
+    for ts, source, mtype, freq, level, airline in store.rows(entries):
+        if ts < start:
             continue
-        content = msg["type"].split(":")[1] not in ("linktest", "status", "partial", "ack", "handoff", "connection", "network")
-        b = buckets.setdefault(int((msg["ts"] - start) // bucket_secs), Counter())
-        b[f"{msg['source']}:{'content' if content else 'link'}"] += 1
-        types[msg["type"]] += 1
-        if msg.get("freq") is not None:
-            f = freqs.setdefault((msg["source"], round(msg["freq"], 3)),
-                                 {"source": msg["source"], "freq": round(msg["freq"], 3), "frames": 0, "content": 0,
-                                  "levels": []})
+        info = per_type.get(mtype)
+        if info is None:
+            content = mtype.split(":")[1] not in LINK_TYPES
+            info = per_type[mtype] = (content, f"{source}:{'content' if content else 'link'}")
+        content, label = info
+        b = buckets.get(int((ts - start) // bucket_secs))
+        if b is None:
+            b = buckets[int((ts - start) // bucket_secs)] = {}
+        b[label] = b.get(label, 0) + 1
+        types[mtype] += 1
+        if freq is not None:
+            f = freqs.get((source, freq))
+            if f is None:
+                f = freqs[(source, freq)] = {"source": source, "freq": freq, "frames": 0, "content": 0, "levels": []}
             f["frames"] += 1
-            f["content"] += content
-            if msg.get("level") is not None and len(f["levels"]) < 2000:
-                f["levels"].append(msg["level"])
-        if content and msg.get("flight"):
-            airlines[msg["flight"][:2]] += 1
-    timeline = [{"t": start + i * bucket_secs, **dict(buckets.get(i, {}))}
+            if content:
+                f["content"] += 1
+            if level is not None and len(f["levels"]) < 2000:
+                f["levels"].append(level)
+        if content and airline:
+            airlines[airline] += 1
+    timeline = [{"t": start + i * bucket_secs, **buckets.get(i, {})}
                 for i in range(int((now - start) // bucket_secs) + 1)]
     freq_rows = []
     for f in sorted(freqs.values(), key=lambda f: (f["source"], f["freq"])):

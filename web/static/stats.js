@@ -10,6 +10,7 @@ const els = { alerts: $("alerts"), receivers: $("receivers"), timeline: $("timel
   airlines: $("airlines"), types: $("types"), stations: $("stations"), server: $("server"), stats: $("stats"),
   span: $("traffic-span"), includeLink: $("include-link"), tip: $("tip") };
 let last = null;
+let refreshing = false; // one request in flight at a time: a slow server must not be asked again before it answers
 
 const fmtAgo = (ts) => ts ? ago(ts) : "never";
 const durationText = (secs) => secs < 3600 ? `${Math.floor(secs / 60)} min` : `${Math.floor(secs / 3600)} h ${Math.floor((secs % 3600) / 60)} min`;
@@ -238,6 +239,8 @@ function renderServer(s, store, archive) {
 }
 
 async function refresh() {
+  if (refreshing) return;
+  refreshing = true;
   try {
     const [full, types] = await Promise.all([
       fetch("/api/stats/full").then((r) => r.json()),
@@ -261,6 +264,8 @@ async function refresh() {
     });
   } catch {
     $("conn").classList.remove("up");
+  } finally {
+    refreshing = false;
   }
 }
 

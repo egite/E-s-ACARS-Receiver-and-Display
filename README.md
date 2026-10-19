@@ -236,9 +236,11 @@ the stats page and the Raw feed all read it, and it lives in memory only, so a r
 empties it. It can be set up to 168 hours (7 days). Messages stay as live dicts for the
 first 48 hours and are then re-encoded as compact JSON, about six times smaller, and parsed
 back only when something asks for one. That is what makes a week affordable: 7 days of live
-dicts would be roughly 1.2 GB, where the mixed form is around 500 MB. The cost is that
-whole-store passes — the stats page, the Message types dialog — have to parse the cold part,
-so they get slower the further back you keep.
+dicts would be roughly 1.2 GB, where the mixed form is around 500 MB. Each compacted
+message also keeps a small stats row (its time, source, type, frequency, level and airline),
+so whole-store passes — the stats page, the Message types dialog — never parse the cold
+part: a pass over a week of traffic takes about a second, and its result is reused for at
+least 30 s and never asked for twice at once.
 
 `archive` is the durable record, and it survives restarts. Both it and `history_hours` are
 on the Settings page, next to each other, because they are easy to mistake for one another:
