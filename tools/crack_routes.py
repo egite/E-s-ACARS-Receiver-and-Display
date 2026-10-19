@@ -142,10 +142,35 @@ def crib(rows):
 
     So the crib comes from the event the group uses most, which is POS by a wide margin -
     219 reports against 10 in the group that caught me out.
+
+    The other events are worth more than a warning, though: they can be named from
+    structure alone, before any alphabet exists, because the letters overlap. TOC shares its
+    middle letter with POS - both have an O - and ETA's middle letter is the T that starts
+    TOC. So the second-commonest event matching POS in the middle is TOC, handing over T and
+    C, and one whose middle matches TOC's first letter is ETA, handing over E and A. A group with no TOC
+    gets neither, because guessing there cost more than it paid. That takes the crib from
+    five letters to nine where both events are present, and the free alphabet from
+    twenty-one letters to seventeen.
     """
-    common = collections.Counter(f[0][:3] for f, _, _ in rows).most_common(1)[0][0]
-    position = next(f[1] for f, _, _ in rows if f[0][:3] == common)
-    return {common[0]: "P", common[1]: "O", common[2]: "S", position[0]: "N", position[6]: "W"}
+    ranked = collections.Counter(f[0][:3] for f, _, _ in rows).most_common()
+    pos = ranked[0][0]
+    position = next(f[1] for f, _, _ in rows if f[0][:3] == pos)
+    out = {pos[0]: "P", pos[1]: "O", pos[2]: "S", position[0]: "N", position[6]: "W"}
+    toc = next((e for e, _ in ranked[1:] if e[1] == pos[1] and e != pos), None)
+    if toc:
+        out.update({toc[0]: "T", toc[2]: "C"})
+    eta = next((e for e, _ in ranked[1:] if toc and e[1] == toc[0]), None)
+    if eta:
+        out.update({eta[0]: "E", eta[2]: "A"})
+    # No guessing beyond that. A group with no TOC to anchor on was briefly given its odd
+    # event as ETA, three letters on an assumption, and group 09 fell from 62% to 48% for it
+    # - the same way of being wrong that the POS crib was, and worth not repeating.
+    # a cipher is an injection; drop anything that would claim a letter twice
+    seen = {}
+    for cipher, plain in out.items():
+        if plain not in seen.values() and cipher not in seen:
+            seen[cipher] = plain
+    return seen
 
 
 def fit(rows, ap, restarts=25, rng=random):
@@ -230,7 +255,12 @@ def main():
         groups = {args.group: groups.get(args.group, [])}
     rng = random.Random(args.seed)
 
-    print(f"ceiling {CEILING}% (known-true routes)   chance {NULL}% (positions shuffled)\n")
+    total_records = sum(len(v) for v in groups.values())
+    # The archive grows while the receiver runs, so two runs minutes apart see different
+    # data, reshuffle differently and are not comparable however fixed the seed is. One
+    # record's difference in a group moved a result by 14 points. Print the count.
+    print(f"ceiling {CEILING}% (known-true routes)   chance {NULL}% (positions shuffled)")
+    print(f"{total_records} records in this snapshot - runs are only comparable at equal counts\n")
     print(f"{'group':>6s}{'train':>7s}{'held out':>10s}{'on-route':>10s}{'objective':>12s}")
     hits = total = 0
     for group, rows in sorted(groups.items()):
