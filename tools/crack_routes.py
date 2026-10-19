@@ -9,6 +9,10 @@ matters more: an honest way to tell whether it worked.
 
 Three numbers frame every result, and none of them is 100%:
 
+Field 0 names the event - POS mostly, with some TOC and TOD - and the crib has to come
+from the common one. Getting that wrong is silent: the search still runs, still reports a
+plausible objective, and is simply pinned away from the answer.
+
   ceiling  Some of this traffic is sent in clear, origin and destination included. Over
            those known-true routes the aircraft sits within 100 km of its own great circle
            78% of the time - real flights deviate - so 78% is what a perfect decode scores.
@@ -18,13 +22,21 @@ Three numbers frame every result, and none of them is 100%:
            Fitting and scoring on the same records flatters the result by a wide margin -
            an early version of this reported 71% that way and 66% held out.
 
-Run it to reproduce a measurement, or as a starting point for a better objective. As of
-writing the honest position is that the objective, not the search, is the limit: for key
-group 02 twelve independent searches all converge on the same global optimum and it is
-still only 50% correct, and for group 04 the correlation between objective and truth is
-negative. More restarts cannot fix that. A stronger objective - scoring a route against an
-aircraft's whole trajectory and its first and last sighting rather than one point's
-distance from a great circle - is the open idea, not more compute.
+Where it stands: 71% held out over 20 days of traffic, seven of the nine key groups
+converging to the same alphabet on every run, and five of them at or above the ceiling
+(group 05 reaches 90%, group 03 and 07 85%). The four that lag - 02, 04, 08, 09 - sit near
+60%, which is well clear of chance but not good enough to put an airport on screen, so
+web/translate.py still leaves those two fields alone.
+
+The objective does rank candidates correctly: given two alphabets for the same group, the
+one scoring higher is the better answer, checked side by side on identical rows. What was
+wrong for a long time was the crib, and the symptom was run-to-run spread that looked for
+all the world like a bad optimiser. Worth checking the spread column before believing any
+change to this file helped.
+
+A stronger objective is still the open idea - scoring a route against an aircraft's whole
+ADS-B trajectory rather than one point's distance from a great circle, which would also
+break the symmetry that makes a route and its reverse score identically.
 
     tools/crack_routes.py                     fit every key group and score it
     tools/crack_routes.py --repeats 12        repeat each fit to expose run-to-run spread
@@ -117,10 +129,23 @@ def alphabet(rows):
 
 
 def crib(rows):
-    """Five letters for free: every report begins "POSnn", and the position field is
-    written "N dd mm.m W ddd mm.m", so the hemispheres sit at known columns."""
-    f = rows[0][0]
-    return {f[0][0]: "P", f[0][1]: "O", f[0][2]: "S", f[1][0]: "N", f[1][6]: "W"}
+    """Five letters for free - but only from the right record.
+
+    Field 0 is a three-letter event and a two-digit number, and the event is not always
+    POS: each key group also carries a few TOC and TOD reports. Taking the crib from
+    whichever record happened to sort first asserts, for a group whose first record is a
+    TOC, that T is P and C is S. Three of the five letters are then wrong and the search is
+    pinned inside a region that cannot contain the answer - which is what made the same
+    group score 148.5 on one shuffle and 39.7 on another, and what I spent four experiments
+    blaming on the optimiser. The middle letter agrees either way, POS and TOC both having
+    an O, which is just enough to make it look half right.
+
+    So the crib comes from the event the group uses most, which is POS by a wide margin -
+    219 reports against 10 in the group that caught me out.
+    """
+    common = collections.Counter(f[0][:3] for f, _, _ in rows).most_common(1)[0][0]
+    position = next(f[1] for f, _, _ in rows if f[0][:3] == common)
+    return {common[0]: "P", common[1]: "O", common[2]: "S", position[0]: "N", position[6]: "W"}
 
 
 def fit(rows, ap, restarts=25, rng=random):
