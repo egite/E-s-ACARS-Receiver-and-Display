@@ -38,4 +38,10 @@ Either way the restart needs to work under systemd (`systemd/acars-web.service`)
   says "aircraft database: N registrations", and that new archive lines from the ACARS
   receiver carry `icao` with `icao_src` and, when ADS-B has the aircraft, `adsb` (commit
   `3aa3e8e`; also untested against a running server).
+- Keep the decoders' end-of-message flag. ARINC 618 ends every block but the last with ETB
+  and the last with ETX, so a report's completeness is known on the air; acarsdec and
+  dumpvdl2 each pass some form of it on, but `normalize_acars`/`normalize_vdl2` drop it (no
+  archived frame carries it to check the field names against - look at live decoder JSON
+  on the receiver). With it, `BlockAssembler` could tell a finished report from one still
+  missing blocks instead of waiting out `BLOCK_WINDOW_SECS`.
 - Push the decoding commits to GitHub (`origin`) when ready; none have been pushed.

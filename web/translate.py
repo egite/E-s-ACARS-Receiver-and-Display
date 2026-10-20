@@ -1784,6 +1784,13 @@ def translate(msg, raw=None):
     text = (msg.get("text") or "").strip()
     flight = msg.get("flight") or ""
     airline = flight[:2]
+    # A decoder that joins the blocks of an H1 downlink itself leaves each later block's
+    # "#<sublabel>B" header (ARINC 620 5.4.2) in the middle of the text; take those out,
+    # keeping the leading one the readers below expect.
+    header = re.match(r"#[A-Z0-9]{2}B", text) if label == "H1" else None
+    if header and header[0] in text[4:]:
+        text = text[:4] + text[4:].replace(header[0], "")
+        msg = dict(msg, text=text)
 
     if kind == "xid":
         p = msg.get("position")

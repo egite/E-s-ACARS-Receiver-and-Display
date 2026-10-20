@@ -29,3 +29,24 @@ def test_airbus_report_with_inline_sublabel():
          "text": "#DFBA319,132637,1,1,TB000000/REP998,00,00,4/-  A37/A31937,1,1/\r\nC1N872UA,SEP30,120145,KOMA,KDEN,1442/"}
     r = translate.translate(m)
     assert r["summary"].startswith("Airbus aircraft monitoring report 998") and not r.get("generic")
+
+
+def test_continuation_header_is_dropped_when_joining():
+    # ARINC 620 5.4.2: later blocks open with "#", the sublabel and "B", then carry on mid-text.
+    head = msg("A", "#DFBHYDN12221300926KPSPKDEN10101200100000000000003WB0900  -8.0 39.78 3\r\n9.84 76.69 76.72"
+                    " -33.5  300310.731142800 56369 73.0 83.830603036   0.\r\n000   0.000:::AIRFALSE  -7.5 43.50"
+                    " 42.16 78.91 78.50 -33.3  298520.", 0)
+    tail = msg("B", "#DFB731142800 56374 73.0 83.830643036   0.000   0.000:::AIRFALSE", 30)
+    assembler = blocks.BlockAssembler()
+    assembler.observe(head)
+    assembler.observe(tail)
+    assert "#DFB" not in head["text"][4:]
+    assert head["english"]["summary"] == "Hydraulic monitoring report (2 samples), 30,031 ft → 29,852 ft"
+
+
+def test_decoder_joined_text_loses_inner_headers():
+    m = {"label": "H1", "flight": "UA1010", "kind": "acars",
+         "text": "#DFBHYDN12221300926KPSPKDEN10101200100000000000003WB0900  -8.0 39.78 39.84 76.69 76.72 -33.5"
+                 "  300310.731142800 56369 73.0 83.830603036   0.000   0.000:::AIRFALSE  -7.5 43.50 42.16 78.91"
+                 " 78.50 -33.3  298520.#DFB731142800 56374 73.0 83.830643036   0.000   0.000:::AIRFALSE"}
+    assert translate.translate(m)["summary"].startswith("Hydraulic monitoring report (2 samples)")

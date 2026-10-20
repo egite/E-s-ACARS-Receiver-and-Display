@@ -82,7 +82,12 @@ class BlockAssembler:
     @staticmethod
     def _join(group):
         head = group["head"]
-        head["text"] = group["own"] + "".join(group["parts"][k]["text"] for k in sorted(group["parts"]))
+        # ARINC 620 5.4.2: second and later blocks of an H1 downlink open with "#", the two
+        # sublabel characters and a reserved "B", then carry on from the character the
+        # previous block ended on. That header is framing, not text; left in, it lands in the
+        # middle of fields ("41#DFB.91").
+        head["text"] = group["own"] + "".join(re.sub(r"^#[A-Z0-9]{2}B", "", group["parts"][k]["text"])
+                                              for k in sorted(group["parts"]))
         english = translate(head, None)
         english["details"] = english["details"] + [f"Assembled from {len(group['parts']) + 1} blocks"]
         head["english"] = english
