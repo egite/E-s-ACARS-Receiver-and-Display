@@ -1187,8 +1187,16 @@ def report239(text):
 
 def translate_monitoring(msg):
     report = _translate_monitoring(msg)
-    snapshot = report239(re.sub(r"[\r\n]", "", msg["text"])) if report else None
-    if snapshot:
+    flat = re.sub(r"[\r\n]", "", msg["text"])
+    snapshot = report239(flat)
+    if snapshot and not report:
+        # Northwest's copy ("R39/A33039,1,1") has a header none of the patterns know, but the
+        # snapshot block is the same and reads the same.
+        glued = re.findall(r"([KCPM][A-Z]{3})([KCPM][A-Z]{3})(?![A-Z])", flat)
+        known = [g for g in glued if airports.city(g[0]) and airports.city(g[1])]
+        report = result("data", "Aircraft monitoring report 239",
+                        [f"Flight {known[-1][0]} \u2192 {known[-1][1]}" if known else None])
+    if snapshot and report:
         report["position"], extra = snapshot
         report["details"] = [d for d in report["details"] if d] + extra
     return report
