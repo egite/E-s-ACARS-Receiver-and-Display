@@ -173,46 +173,49 @@ dot-padded registration, hex application data, CRC. Character-oriented ATS is AR
 which we do not have. Our label 44 has no slash after its identifier so it is neither, which
 fits it being an airline's own format.
 
-## What the unread pile is, measured
+## What remains, and what it would take
 
-Sweeping the archive through the translator on 20 October (ARINC 622 messages excluded, since they
-only decode live) left about 95,000 of 1.3 million messages without a specific reading. Nearly all
-of that is engine-monitoring continuation blocks (United, Southwest, Frontier H1/DF), which carry
-no text structure to read and are correctly left generic. The families with structure and value
-were label 15, UPS `*POS`, FedEx `PO6`, the weather-profile layouts above and the United short
-forms, and those are now read. Useful references: airframesio/acars-message-documentation on
-GitHub (label 15 layout, 5Z command codes) and the acarsonline.pbworks.com label list.
+Measured 21 October 2026 with `tools/sweep_unread.py`, which replays the archive through
+the translator joined the way the screen joins it (ARINC 622 traffic excluded: libacars
+decodes it live). Of 782,188 messages, **19,669 (2.5%) have no specific reading**. A
+further **~23,000 are monitoring reports identified only by name and route**, their values
+unread. The groups, and what would open each:
 
-**Measure what the screen shows, not the archive's blocks.** Until 21 October the sweep judged
-every archived block alone, and called 95,000 messages unread. VDL2 multi-block reports are
-joined by the server in memory, so the archive keeps each block separately and the middle
-of a report looks like nothing. Replayed through the server's own `BlockAssembler` (now
-`web/blocks.py`, so the tool can import it) the pile is 31,180 of 782,188, and stripping
-the inline `#DFB` sublabel that hid 6,701 Airbus and United monitoring reports from their
-patterns brings it lower still.
+| group | messages | what it is | what would open it |
+|---|---|---|---|
+| Headless monitoring blocks | ~8,800 | Middle blocks of multi-block H1 reports whose first block was never received, so they cannot be joined | Nothing recovers the missed ones. Fewer in future with better reception (antenna, second receiver) and the decoders' end-of-message flag (TODO) |
+| H1 monitoring, layout unknown | ~5,300 | Airline-configured engine and aircraft monitoring reports (United, Southwest, Alaska, Frontier) | The airlines' report definitions, from the aircraft maker or monitoring vendor (Boeing AHM, Airbus, Teledyne Controls, Honeywell), or someone at an operator. No ARINC specification covers them |
+| Named, values unread | ~23,000 | Airbus ACMS report numbers (8,800), Boeing OHMA (5,100), United `A`/`B`-numbered, PNM, APM, CAB, takeoff engine data, avionics configuration | Same as above. Air-data fields can be read without definitions - temperature, Mach, altitude and wind check against physics and ADS-B, as HYDN, PNM4, A86, CRZN and report 239 were - but engine values (EGT, vibration, oil, bleed) have nothing outside the message to check them by |
+| Label MA | 1,334 | Encrypted: 6.41 bits/char against a 6.44 ceiling. Not an ARINC 620 label (MA there is only a TEI) and not ARINC 823 AMS, which uses P0-PC | Nothing. Closed |
+| Lufthansa 1L | 227 | Structured (low-entropy columns, repeated runs) but no known plaintext attaches | A capture where these flights send the same facts in clear, or Lufthansa's own documentation |
+| Business-aviation residue | ~20 | Messages missing rare key characters, plus one clear key-00 `AMI02` event (label 88) the reader doesn't know | Months more data, a capture from another receiver (the keys are shared), or SATCOM uplinks per the paper (needs an L-band receiver) |
+| Southwest 37 residue | 351 | Key groups 14, 17-19 not in the table, and odd variants | More data per group; the H1 crib method would work once enough pairs exist |
+| Not yet attempted | ~3,000 | Clear text with visible structure: label 83 CSV with route, position and altitude (404), Air Canada 4R (426) and 4T `AGFSR` (235), label 33 `Q,H,...` with route (360), 49 (115), 19 `POS` (73), 32 `APR` with position (64), 14 and 16 in a label-15-like `(2` layout (244), 10 `WXREQ` (157), 3S/3J, 4N/4P | Nothing new - the archive and the evidence bar. The next session's work |
+| Not worth chasing | small | Air Canada 4s `DFR` (flight and day only), RB, free-form 5Z | - |
 
-## Open, in rough order of tractability
+Two families are held back on purpose. American's A39 `C1TRP` trip reports (460) carry a
+position and flight level that look clean - altitude matches ADS-B to the foot - but the
+position is either ~5 km from the aircraft or ~150 km behind it along its track, with the
+report only seconds old: a sample from some event the message doesn't name, so it stays off
+the map until that trigger is found (an archived ADS-B track would show it). Label 15
+`(1N...` (nine messages) has one field fewer than `(2N...` and is not read.
 
-1. ~~Southwest label 37 origin and destination.~~ Solved 20 October, not by attack: see
-   the pitfall on known plaintext above. `SOUTHWEST_LETTERS` in `web/translate.py` says how
-   it was checked.
-2. **Business aviation**: after the 20 October sweep, what is left unread in this cipher is a
-   handful of free-text MSG reports with rare characters, and one POA whose minus sign is
-   unseen in its group. The field separator inside POA reports (shown `?`) is unidentified.
-   A wider collection range or a shared capture would fill the rest.
-3. **Rare labels.** Swept 20 October. Label 48 (Delta/Northwest) is a connection request and
-   now reads. The unread label 42 messages are all business-aviation ciphertext (item 2), as
-   are label 48's XA/ZD ones. Label 4S is Air Canada `DFR AC1073/30`, a flight number and
-   day with nothing to check a meaning against. Label 88's one unread message is a
-   clear key-00 business-aviation `AMI02` event the label 44 reader doesn't know. Label 15 `(1N…` (nine messages) has one field fewer than `(2N…`
-   and is not read.
-4. **American A39 `C1TRP` trip reports** (460): the `C2` field holds a position and FL that
-   look clean (altitude matches ADS-B to the foot) but the position is either ~5 km from
-   the aircraft or ~150 km behind it along its track, with the report time only seconds
-   old. It is a position recorded at some event the message doesn't name, so it is not
-   shown; find what triggers the sample before putting it on the map.
-5. **Lufthansa label 1L** (220 messages): columns 0-1 and 6-7 carry 3.8 bits against 5.2
-   elsewhere and six-character runs repeat across messages, so there is structure, but no
-   column holds time, flight level, speed or track under a consistent substitution, keyed
-   on the header or not, and none of these aircraft send a route in clear to crib from.
-6. **Label MA**: don't. It is closed on entropy.
+**Resources.** In `ARINC/` (gitignored): 618-6, 620-6, 622-4 and 702A-3 are used; 429
+(the avionics bus) and 653 (avionics partitioning) don't bear on message text. ARINC 623 is
+not worth buying for this receiver - US departure clearances are 620 free text and only ~5
+messages here are 623 territory - and no ARINC document defines the user-defined labels
+most of the remainder sits on. What would help, most first:
+
+1. Receiver changes, all cheap and forward-looking: the registration-to-ICAO lookup (built,
+   `3aa3e8e`, to verify on the receiver), a few minutes of ADS-B track archived around each
+   message, and keeping the decoders' end-of-message flag. See `docs/TODO.md`.
+2. Airline or vendor report definitions for the monitoring reports, if they can be had.
+3. Time: months of collection fill rare key characters and rare formats.
+4. Better reception or a second receiver, for fewer orphaned blocks.
+
+Sources already searched and what they gave: Smith et al. (FC 2017, PoPETs 2018) for the
+business-aviation cipher; airframesio/acars-message-documentation and the acarsonline label
+list for community layouts; ibosoftnet/acars-decoding-library (Elastic License - read, not
+copied) for the ARINC 620-7 label list showing the numeric labels as user-defined. No
+academic source outlines ARINC 620 or 623, and the Honeywell ACARS-over-IP patents cite 620
+without reproducing it.

@@ -44,4 +44,9 @@ Either way the restart needs to work under systemd (`systemd/acars-web.service`)
   archived frame carries it to check the field names against - look at live decoder JSON
   on the receiver). With it, `BlockAssembler` could tell a finished report from one still
   missing blocks instead of waiting out `BLOCK_WINDOW_SECS`.
+- Archive a few minutes of ADS-B track around each message, not only the fix at arrival.
+  Several reports carry a window recorded before sending (American's A39 trip-report
+  positions sit ~150 km behind the aircraft); with the track, the moment the report
+  describes can be found and its trigger identified. VRS gives the current fix only, so the
+  server would keep a short per-aircraft history from its polls.
 - Push the decoding commits to GitHub (`origin`) when ready; none have been pushed.
