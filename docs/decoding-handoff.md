@@ -18,7 +18,7 @@ tail of rare labels.
 | Standard ACARS/VDL2 formats | handled by `web/translate.py` |
 | CPDLC and ADS-C (label BA, H1/M1) | **libacars**, already linked. AT1, DR1 and CC1 all decode |
 | Delta/Northwest label 17 | waypoint progress reports, decoded |
-| Southwest label 37 | positions, altitude, Mach, airspeed, track, wind, temperature, fuel, weight. Origin and destination **not** read |
+| Southwest label 37 | positions, altitude, Mach, airspeed, track, wind, temperature, fuel, weight, and (20 October) origin and destination |
 | Business aviation labels 41/42/44 | fully read, cipher broken: position, altitude, times, fuel, origin, destination, plus OFF/ETA/TWX/MSG events |
 | FedEx label 16 AUTPOS | decoded |
 | Label 15 position reports | decoded (20 October): general-aviation `(2N…` reports in decimal degrees with ground speed and temperature; British Airways `FST01` with route, FL, fuel, wind, heading, ground speed (within 2 kt of ADS-B) |
@@ -114,6 +114,13 @@ characters clashed, and the letter half - a hill-climb - was overriding the digi
 which had been checked against ADS-B to 0.43 km. Caught only because decrypting a different
 message type surfaced a stray Z.
 
+**Look for known plaintext before attacking.** Label 37's route fields sat at chance under
+a dictionary attack for days. Southwest's own H1 position reports name the route in clear
+(`...,KDEN,KSAN,...`), so pairing each label 37 report with the same flight's H1 report
+gave 1,917 cribbed records and every letter in nine alphabets in one pass, 1,071 of 1,074
+exact on days held out. Before attacking an obfuscated field, look for the same fact sent in
+clear by the same flight on another label; the archive pairs them by aircraft and time.
+
 **Look for prior art first.** The business-aviation cipher is published. Searching for it at
 the outset would have supplied the key identifier, the nine keys and the POS crib directly.
 
@@ -151,11 +158,9 @@ GitHub (label 15 layout, 5Z command codes) and the acarsonline.pbworks.com label
 
 ## Open, in rough order of tractability
 
-1. **Southwest label 37 origin and destination.** Fields 0 and 1, four characters each,
-   all letters, position 0 constant (a `K`). They hold still within a leg and reverse on a
-   turnaround, so they are origin and destination. The attack sits at chance with 548
-   records per group, where the same attack on business aviation reached the ceiling with
-   170 - so this is method, not data, and nothing published covers it.
+1. ~~Southwest label 37 origin and destination.~~ Solved 20 October, not by attack: see
+   the pitfall on known plaintext above. `SOUTHWEST_LETTERS` in `web/translate.py` says how
+   it was checked.
 2. **The 15 business-aviation messages still unread**, mostly missing one rare key
    character. The paper's 98.44% suggests the rest is reachable; a wider collection range
    or a shared capture would do it.

@@ -947,6 +947,44 @@ SOUTHWEST_KEYS = {
 }
 SOUTHWEST_SHAPE = (4, 4, 8, 8, 5, 3, 3, 4, 4, 4, 3, 3, 3, 3, 6)
 
+# The letters, for fields 0 and 1 - origin and destination ICAO codes. Read off directly
+# rather than attacked: Southwest's H1 position reports name the route in clear, so pairing
+# each label 37 report with the same flight's H1 report within half an hour gives known
+# plaintext for 1,917 reports. Every letter maps to one cipher character at every position,
+# none collides with a digit or separator, and fitting on the first nine days reproduces the
+# clear route exactly on 93% of the later ones (the misses are letters not yet seen; the
+# full table gets 1,071 of 1,074). The rarest letters - V, Y, Q, and Z and J in a couple of
+# groups - never occurred in a paired report and were each the one unused letter that turns
+# the remaining codes into airports Southwest flies to. Checks with no clear text behind
+# them: all 36,694 codes these decode across the archive are real airports, and on the
+# 16,416 reports with no clear route to pair, the decoded route passes within 100 km of the
+# aircraft's ADS-B fix 89% of the time over the same airport pairs where clear routes score
+# 93%, against 52% shuffled. Fields 0 and 1 are digits rather than letters in a few dozen
+# short variants, which decode to holes and are not shown.
+SOUTHWEST_LETTERS = {
+    '01': (' ()./045689:ABCDEFGHJKLQTW', 'VIKMRNPZSUYXACEHLOTWBGDQJF'),
+    '02': (' (,-.1256789ABFKLMNOPSTUVW', 'HGKZLQYWRVTNJADMPBICUEOFSX'),
+    '03': ('(),./12689:EFGHINOPQRSTUVW', 'GXEQUFTPRSJAWHLBMNVCYODIKZ'),
+    '04': ('(),-./0167ABCDEFGOPQRSTUVW', 'BEHMPSUYDGJLOQTWZACFIKNRVX'),
+    '05': ('-./0123456789IJKLMNOPQRSTU', 'BDFHJLNPRTVXZACEGIKMOQSUWY'),
+    '06': (' (),-./0123456789:STUVWXYZ', 'AGFEDCBRQPONMLKJIHZYXWVUTS'),
+    '07': ('0123456789:ABLMNOPQRSTUVWX', 'ACEGIKMOQSUWYBDFHJLNPRTVXZ'),
+    '08': ('(),./123678HIJKLMNOPQTVXYZ', 'MDSJQOWZLNRAPEFTVIKYBHUCXG'),
+    '09': ('(),-.01234ABCDEFOPQRSTUVWX', 'LQMSRUZYVXKPTACBNODGJEFIHW'),
+}
+
+
+def southwest_route(group, fields):
+    """Origin and destination, when both decode to an airport we know."""
+    key = SOUTHWEST_LETTERS.get(group)
+    if not key or len(fields) < 2:
+        return None
+    letters = dict(zip(*key))
+    ends = ["".join(letters.get(c, "?") for c in f) for f in fields[:2]]
+    if any(len(e) != 4 or "?" in e or not airports.city(e) for e in ends):
+        return None
+    return f"Flight {ends[0]} → {ends[1]}"
+
 
 def translate_southwest(msg):
     """Position, altitude, speed, fuel and weight out of a Southwest label 37 report.
@@ -989,7 +1027,7 @@ def translate_southwest(msg):
     if not (lat and lon):
         return None
     lat, lon = int(lat) / 1000, -int(lon) / 1000
-    details = [latlon(lat, lon)]
+    details = [southwest_route(head[:2], fields), latlon(lat, lon)]
     summary = "Position report"
     if tuple(len(f) for f in fields) == SOUTHWEST_SHAPE:
         alt, mach = num(fields[4], *range(5)), num(fields[7], 1, 2, 3)
