@@ -748,6 +748,48 @@ def translate_pnm4(text):
     return result("data", f"{name} ({plural(len(rows), 'sample')}), {span}", details)
 
 
+# Delta's APM cruise performance report: comma-separated, most fields padded with empty
+# ones, after a header of tail, flight (plus one digit), route and date/time:
+#
+#   APM    1N804DN          DA11299 KDENKMSP300926122910,,,.720,,438.4,277.4,,, -4.50,,,28981,...
+#
+# Read by position in the field list and checked over 319 reports. Against the aircraft's
+# own ADS-B: ground speed matches to 0.5 kt (median absolute), track to 2 degrees, and the
+# position sits 3.5 km away - about fifteen seconds of flight. Against the atmosphere:
+# calibrated airspeed is what Mach and altitude give in the standard atmosphere to 0.14 kt,
+# static temperature is what Mach and true airspeed give to 0.4 C, total temperature
+# follows from both to 0.4 C, and every position is inside the receiver's radio horizon.
+# Fuel flow (2,600-3,300 per engine) and weight (136,000-165,000) are pounds: in
+# kilograms both would be twice a narrowbody's.
+APM_HEAD = re.compile(r"APM +\d+(N\w+?) +DA(\d{4})\d? *(" + ICAO_AP + ")(" + ICAO_AP + r")\d{6}(\d{6}),")
+APM_FIELDS = {"mach": 3, "tas": 5, "cas": 6, "tat": 9, "alt": 12, "weight": 15, "ff1": 18, "ff2": 19,
+              "n1a": 22, "n1b": 23, "gs": 27, "lat": 44, "lon": 47, "track": 50, "sat": 127}
+
+
+def translate_delta_apm(text):
+    text = text.replace("\r", "").replace("\n", "")
+    head = APM_HEAD.search(text)
+    if not head:
+        return None
+    raw = [f.strip() for f in text[head.end() - 1:].split(",")]
+    v = {k: float(raw[i]) if i < len(raw) and re.fullmatch(r"-?\d*\.?\d+", raw[i]) else None
+         for k, i in APM_FIELDS.items()}
+    details = [f"Flight {head[3]} → {head[4]}", f"Generated {hhmmss(head[5])}"]
+    position = None
+    if v["lat"] is not None and v["lon"] is not None:
+        position = {"lat": v["lat"], "lon": v["lon"], "src": "Delta APM report"}
+        details.append(latlon(v["lat"], v["lon"]))
+    details += [f"True airspeed {v['tas']:.0f} kt, calibrated {v['cas']:.0f} kt" if v["tas"] and v["cas"] else None,
+                f"Ground speed {v['gs']:.0f} kt, track {v['track'] % 360:.0f}°" if v["gs"] and v["track"] is not None else None,
+                f"Outside air {v['sat']:.1f}°C (total {v['tat']:.1f}°C)" if v["sat"] is not None and v["tat"] is not None else None,
+                f"N1 {v['n1a']:.1f}/{v['n1b']:.1f}%" if v["n1a"] and v["n1b"] else None,
+                f"Fuel flow {v['ff1']:,.0f}/{v['ff2']:,.0f} lb/h" if v["ff1"] and v["ff2"] else None,
+                f"Gross weight {v['weight']:,.0f} lb" if v["weight"] else None]
+    summary = "Cruise performance report" + (f", {feet(int(v['alt']))}" if v["alt"] else "") + \
+              (f", Mach {v['mach']:.3f}" if v["mach"] else "")
+    return result("data", summary, details, position=position)
+
+
 def translate_monitoring(msg):
     # H1 reports can carry their sublabel inline ("#DFB", "#CFB") when the decoder didn't
     # split it off, which kept every pattern below anchored on the report's own first
@@ -756,7 +798,7 @@ def translate_monitoring(msg):
     tagged = translate_tagged_weather(text)
     if tagged:
         return tagged
-    for reader in (translate_hydn, translate_pnm4):
+    for reader in (translate_hydn, translate_pnm4, translate_delta_apm):
         report = reader(text)
         if report:
             return report

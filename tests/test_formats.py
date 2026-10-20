@@ -54,3 +54,18 @@ def test_phase_word_is_not_an_airport():
     msg = {"label": "H1", "flight": "UA0000", "kind": "acars",
            "text": "CAB3WB09N76517091415454022 88319150KDENCLMB7000CLMB-------///////5\r\n411-4340001100  5332  "}
     assert not any("CLMB" in (d or "") for d in translate.translate(msg)["details"])
+
+
+def test_delta_apm_cruise_report():
+    # DL1129, 30 September; ADS-B had 41.29 -103.20, 29,012 ft, 452.5 kt, track 48.
+    msg = {"label": "H1", "sublabel": "DF", "flight": "DL1129", "kind": "acars",
+           "text": "061A8115\r\nAPM    1N804DN          DA11299 KDENKMSP300926122910,,,.720,,438.4,27\r\n7.4,,, -4.50,,,"
+                   "28981,,,138280,,,2829,2837,,, 84.56, 84.63,,, 0.6,453.\r\n7,453.7,,0,0,,0,0,,1,1,0,0,0,0,,, 41.2554,,,"
+                   "-103.2571,,,  47.1,,,  0.\r\n8,,,  48.0,,,  0.000,-0.027,,,,,,17880, 8400, 8430,  780,,,,,+++++,++\r\n"
+                   "+++,,,--.-,,,,,140280,,,,,,     0,,,20880, 8370, 8360, 4130,,,,,  962\r\n455,  660369,,,,,,  39.930,"
+                   "  40.737,,, 93.2, 93.2,,,  17,  17,,,627.0\r\n,621.0,,,,,,,-29.8,,, -1.4,,, -0.4,,,  2.9,  2.9,,"}
+    r = translate.translate(msg)
+    assert r["summary"] == "Cruise performance report, 28,981 ft, Mach 0.720"
+    assert "Ground speed 454 kt, track 47°" in r["details"]
+    assert "Outside air -29.8°C (total -4.5°C)" in r["details"]
+    assert r["position"]["lat"] == 41.2554
