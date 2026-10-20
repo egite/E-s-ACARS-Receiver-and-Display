@@ -1568,7 +1568,13 @@ def translate(msg, raw=None):
 
     # Flight computer reports (H1 M1/M2, and United's HDQ-addressed copies)
     if label == "H1" or label.startswith("BA"):
-        posn = translate_posn(text)
+        # The sublabel can sit inline ("#M1B/HDQDLUA.RESREQ", "#M1B/.POS"), which hid these from
+        # every pattern below.
+        text = re.sub(r"^(?:- ?)?#M\dB/?(?=[A-Z0-9]{7}\.|\.)\.?", "", text)
+        # "POS/TS065719,300926N41040W105051,,065719,410,CYS,..." is the POSN report behind a
+        # timestamp: the same fields in the same order.
+        stamped = re.match(r"POS/TS\d{6},\d{6}([NS]\d{5}[EW]\d{6},.*)", text)
+        posn = translate_posn("POSN" + stamped[1] if stamped else text)
         if posn:
             return posn
         body = re.sub(r"^/?[A-Z0-9]{7}\.", "", text)

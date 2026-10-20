@@ -69,3 +69,13 @@ def test_delta_apm_cruise_report():
     assert "Ground speed 454 kt, track 47°" in r["details"]
     assert "Outside air -29.8°C (total -4.5°C)" in r["details"]
     assert r["position"]["lat"] == 41.2554
+
+
+def test_flight_computer_messages_with_inline_sublabel():
+    def read(text):
+        return translate.translate({"label": "H1", "flight": "UA0001", "kind": "acars", "text": text})
+    ack = read("#M1B/HDQDLUA.RESPWI/AK,071/GAHDQDLUA/TS124749,3009261EFA")
+    assert ack["summary"] == "Flight computer accepted the predicted winds sent from the ground"
+    pos = read("#M1B/.POS/TS065719,300926N41040W105051,,065719,410,CYS,065819,BFF,M56,24063,367,850F974")
+    assert pos["summary"] == "Position report: over 41.07°N 105.08°W at 06:57:19 UTC, FL410"
+    assert "Wind 240° at 63 kt" in pos["details"]
