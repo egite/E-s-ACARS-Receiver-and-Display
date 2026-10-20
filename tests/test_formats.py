@@ -199,3 +199,10 @@ def test_airline_position_formats_21_october():
     assert read("32", "CX2091", "APR,V03,CX 209120260930 1,KDFW,PANC,N040.175,W105.568,40026, 483").get("position") is None
     assert read("33", "SY9036", "331,C,--- --.-,---- --.-,,013.2,30,KLAS,KMSP,KMSP,12R/,12L/,30L/,5")["summary"] \
         == "Runway data for KMSP Minneapolis runway 12R"
+
+
+def test_united_label_49():
+    r = translate.translate({"label": "49", "flight": "UA0761", "kind": "acars",
+                             "text": "01ERDCUAL761    /010005EDDMKDEN\r\n+40002259.7- 21.1"})
+    assert r["summary"] == "Flight data report (ERDC), 40,002 ft"
+    assert r["details"][2:] == ["Calibrated airspeed 260 kt", "Total air temperature -21.1°C"]

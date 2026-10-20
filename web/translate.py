@@ -494,6 +494,17 @@ def translate_position_formats(label, text, airline):
         m = re.match(r"APR,V\d\d,.*?,(" + ICAO_AP + "),(" + ICAO_AP + r"),[NS][\d.]+,[EW][\d.]+,(\d+)", text)
         if m:
             return result("position", f"Position report, {feet(int(m[3]))}", [f"Flight {m[1]} \u2192 {m[2]}"])
+    if label == "49":
+        # United ERDC (all 56 inbound to Denver) and CLER (all 38 outbound): route, then
+        # altitude, calibrated airspeed and total air temperature. Altitude is ADS-B's to 16 ft;
+        # Mach from airspeed and altitude, then static temperature from the total, give a true
+        # airspeed 22 kt from ADS-B ground speed at the median and temperatures 2-16 C above
+        # standard. What the two names stand for isn't known.
+        m = re.search(r"(ERDC|CLER)\w*? */\d\d(\d\d)(\d\d)(" + ICAO_AP + ")(" + ICAO_AP + r")\s*([+-]\d{5})([\d.]+)([+-]) *([\d.]+)", text)
+        if m:
+            return result("data", f"Flight data report ({m[1]}), {feet(int(m[6]))}",
+                          [f"Flight {m[4]} \u2192 {m[5]}", f"Recorded {m[2]}:{m[3]} UTC",
+                           f"Calibrated airspeed {float(m[7]):.0f} kt", f"Total air temperature {m[8].replace('+', '')}{m[9]}\u00b0C"])
     if label == "4T":
         m = re.match(r"ETA \w+/\d\d/\d\d (\w{3,4}) (\d\d)(\d\d)Z", text)
         if m:
