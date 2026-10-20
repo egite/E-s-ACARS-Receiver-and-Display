@@ -779,6 +779,30 @@ def translate_a86(text):
     return result("data", f"{name} ({plural(len(rows), 'sample')}), {span}", details)
 
 
+# United's takeoff engine reports, in two layouts:
+#
+#   TKON67827KDENKLAS30091356 ...      route, then day, month, hour, minute
+#   TKO6134972149KDENKSMF093026142204  route, then month, day, year, hour, minute, second
+#
+# The rest is fixed-width engine data with nothing outside the message to check it by, and
+# is not read. The time is the takeoff: in 98% of 878 reports it falls 0-10 minutes before
+# the report was received, and every one leaves Denver, the airport this receiver sees
+# aircraft climb out of.
+TKO_HEADS = (re.compile(r"TKON\d{5}(" + ICAO_AP + ")(" + ICAO_AP + r")(?P<d>\d\d)(?P<mo>\d\d)(?P<h>\d\d)(?P<mi>\d\d)"),
+             re.compile(r"TKO\d{10}(" + ICAO_AP + ")(" + ICAO_AP + r")(?P<mo>\d\d)(?P<d>\d\d)\d\d(?P<h>\d\d)(?P<mi>\d\d)(?P<s>\d\d)"))
+
+
+def translate_takeoff(text):
+    text = re.sub(r"#DFB|[\r\n]", "", text)
+    m = next((m for p in TKO_HEADS if (m := p.match(text))), None)
+    if not m or int(m["h"]) > 23 or int(m["mi"]) > 59 or not (airports.city(m[1]) and airports.city(m[2])):
+        return None
+    at = f"{m['h']}:{m['mi']}" + (f":{m['s']}" if m.groupdict().get("s") else "")
+    return result("data", f"Takeoff engine report, {m[1]} → {m[2]}",
+                  [f"Flight {m[1]} → {m[2]}", f"Took off {at} UTC",
+                   "Derated takeoff" if "DERATE" in text else None])
+
+
 # Delta's APM cruise performance report: comma-separated, most fields padded with empty
 # ones, after a header of tail, flight (plus one digit), route and date/time:
 #
@@ -829,7 +853,7 @@ def translate_monitoring(msg):
     tagged = translate_tagged_weather(text)
     if tagged:
         return tagged
-    for reader in (translate_hydn, translate_pnm4, translate_delta_apm, translate_a86):
+    for reader in (translate_hydn, translate_pnm4, translate_delta_apm, translate_a86, translate_takeoff):
         report = reader(text)
         if report:
             return report

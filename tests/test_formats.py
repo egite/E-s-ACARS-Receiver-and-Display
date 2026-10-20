@@ -97,3 +97,13 @@ def test_united_a86_report():
     r = translate.translate(msg)
     assert r["summary"] == "Aircraft monitoring report A86, en route (2 samples), 27,000 ft → 27,002 ft"
     assert r["details"] == ["Flight KGPI Kalispell → KDEN Denver", "N37547", "Mach 0.694", "Outside air -26°C"]
+
+
+def test_takeoff_reports():
+    def read(text):
+        return translate.translate({"label": "H1", "flight": "UA0001", "kind": "acars", "text": text})
+    r = read("#DFBTKON67827KDENKLAS30091356 687 1900 140  5935030114440023161TOFF4G3\r\n900660782658971 951")
+    assert r["summary"] == "Takeoff engine report, KDEN Denver → KLAS Las Vegas"
+    assert "Took off 13:56 UTC" in r["details"]
+    r = read("#DFBTKO6134972149KDENKSMF093026142204\r\n114190005338014501503<<<<00125<\r\n1407086905200920")
+    assert "Took off 14:22:04 UTC" in r["details"]
