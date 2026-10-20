@@ -154,6 +154,13 @@ filled from someone else's capture. And they recovered their remaining character
 known plaintext. That crib is unavailable here: all 1,554 ciphered messages this receiver
 has are downlinks, and VHF cannot hear SATCOM.
 
+ARINC 620-6 (in the project folder, gitignored) is not the missing key it looks like: it
+assigns most numeric labels (10, 15-17, 22, 31, 33, 37, 41, 42, 44, 48, 1L ...) as
+user-defined, so the airline formats that remain unread are defined nowhere public. What it
+does fix is the standard downlinks - Q3, QF, Q2, Q7, HX, 5D are now read from it - and it
+shows label MA is not one of its labels (MA is only a TEI there; ACARS Message Security,
+ARINC 823, uses labels P0-PC), so MA is an operator's own encrypted channel.
+
 ARINC 702A-3 (also in the project folder, gitignored) defines the flight-computer messages: it
 confirmed `WQ`/`DQ`/`WR` in wind requests, gave fuel remaining after the wind in POSN
 reports (hundreds of pounds here, by burn rate), and showed that `RES.../AK` is an
