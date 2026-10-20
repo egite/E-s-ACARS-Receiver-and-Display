@@ -193,6 +193,14 @@ print(f"{generic} messages without a specific translation (counted before block 
 EOF
 ```
 
+`tests/` also has a pytest suite on the same corpus (no archive needed): the cipher tables are
+checked as substitutions and the Southwest routes against the same flights' clear-text H1
+reports. `sudo apt install python3-pytest`, then from the repo root:
+
+```bash
+python3 -m pytest -q tests
+```
+
 Reading the message contents is a longer story than the sections above: what is decoded,
 what resisted, the evidence each field was accepted on, and the mistakes worth not making
 twice are in [docs/decoding-handoff.md](docs/decoding-handoff.md).
@@ -332,6 +340,7 @@ web/static/            the web pages
 tools/calibrate_ppm.py measure a dongle's tuning error using dumpvdl2
 tools/update_airlines.py  rebuild web/airlines.json from Wikipedia's list of airline codes
 tests/corpus.jsonl     real messages for translation testing
+tests/test_*.py        pytest suite over the corpus
 tools/crack_routes.py  the attack on the obfuscated route fields, and how to score it
 archive/messages/      archived traffic, one JSONL file per day (not in git)
 web/airports.json      ICAO airport table built by tools/update_airports.py
