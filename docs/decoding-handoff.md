@@ -154,19 +154,19 @@ filled from someone else's capture. And they recovered their remaining character
 known plaintext. That crib is unavailable here: all 1,554 ciphered messages this receiver
 has are downlinks, and VHF cannot hear SATCOM.
 
-ARINC 620-6 (in the project folder, gitignored) is not the missing key it looks like: it
+ARINC 620-6 (in `ARINC/`, gitignored, with 618-6, 622-4 and 702A-3) is not the missing key it looks like: it
 assigns most numeric labels (10, 15-17, 22, 31, 33, 37, 41, 42, 44, 48, 1L ...) as
 user-defined, so the airline formats that remain unread are defined nowhere public. What it
 does fix is the standard downlinks - Q3, QF, Q2, Q7, HX, 5D are now read from it - and it
 shows label MA is not one of its labels (MA is only a TEI there; ACARS Message Security,
 ARINC 823, uses labels P0-PC), so MA is an operator's own encrypted channel.
 
-ARINC 702A-3 (also in the project folder, gitignored) defines the flight-computer messages: it
+ARINC 702A-3 (also in `ARINC/`) defines the flight-computer messages: it
 confirmed `WQ`/`DQ`/`WR` in wind requests, gave fuel remaining after the wind in POSN
 reports (hundreds of pounds here, by burn rate), and showed that `RES.../AK` is an
 acknowledgement where only `AC` is acceptance - the translator had called both accepted.
 Only codes the spec defines and this traffic uses are named in the code; the tables are not
-copied in. ARINC 622-4 (in the project folder, gitignored - ARINC sells these) specifies the
+copied in. ARINC 622-4 (in `ARINC/`, gitignored - ARINC sells these) specifies the
 bit-oriented ATS format libacars already reads: a three-character IMI, a seven-character
 dot-padded registration, hex application data, CRC. Character-oriented ATS is ARINC 623,
 which we do not have. Our label 44 has no slash after its identifier so it is neither, which

@@ -14,7 +14,9 @@ __pycache__/
 # Trial harness output (logs, captures, the xng binary)
 tools/decoder-trial/run/
 
-# ARINC specifications are sold by Aeronautical Radio, Inc. and are not ours to redistribute
+# ARINC specifications are sold by Aeronautical Radio, Inc. and are not ours to redistribute;
+# they live in ARINC/
+ARINC/
 *.pdf
 
 # Registration-to-ICAO database (Virtual Radar Server format), shipped separately: 147 MB is
