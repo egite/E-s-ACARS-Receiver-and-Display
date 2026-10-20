@@ -970,6 +970,32 @@ BIZJET_KEYS = {
 }
 BIZJET_SHAPE = (5, 13, 3, 4, 4, 4, 4, 4, 5)
 
+# The letters, for fields 3 and 4 - the origin and destination ICAO codes. Recovered by
+# tools/crack_routes.py, which hill-climbs each alphabet against the airport table and the
+# aircraft's own position, cribbed from the event names in field 0: the commonest is POS,
+# the one sharing its middle letter is TOC, and the one whose middle letter starts TOC is
+# ETA, which between them pin nine letters before the search begins.
+#
+# What justifies putting these on screen, after a long spell of not doing so: across the
+# 1,492 reports in a 20-day archive they decode 2,902 airport codes and every single one is
+# a real airport, over 299 distinct fields that are recognisably the business-jet network -
+# Teterboro 264 times, then Van Nuys, San Jose, Oakland, Aspen, White Plains, Eagle - with
+# reciprocal pairs at matching volumes. And the nine alphabets were derived independently of
+# one another, yet where two of them decode the same aircraft's flight within the same hour
+# they name the same pair 95% of the time, which uses no geometry and no dictionary at all.
+# A wrong alphabet does not do that; the earlier broken ones emitted KJLG and KSVD.
+BIZJET_LETTERS = {
+    '01': ('#$*124569@CDFGHIMT\\_`cdny', 'CQOPGSHEJMFVRITDUXLNYBKWA'),
+    '02': ('*/14:;<ENOXY`ehiklopqrstv|', 'FWRUBOZSPGEJXTHQIVKYCNMDLA'),
+    '03': ('!&()+.0128>@HILOSTWXdfmovw', 'LDZYEKOFJMSHCBNIVTQURWPGXA'),
+    '04': ('%(-/7=@DGKLNZ^`iknpqrvwz', 'WEKABOCTSIXNHJVRMUPLDYGF'),
+    '05': ('"#$&\'/2346?FIJLOQSTX]^_gh}', 'FYVWZMHASKQCTPRODXIENJBUGL'),
+    '06': ('"13456<>?DEILMOS[_acdiosx', 'TDKRSMHQGWOJENXFVCLPYUBIA'),
+    '07': (' $(*-3567?EOTXY\\]_lnrsxy{}', 'LARPMQCFXONUWSIJEYKZDVBTGH'),
+    '08': (' ,07:=?JPRW\\dfijmqsuxyz|}~', 'JPBDAEUYLVCFRHQXTNOSMGKIZW'),
+    '09': (' !%(+-.06;GHLOPQTW\\dejor|}', 'JRHKNLMDZQETSCBXYFOUGAWIPV'),
+}
+
 
 def translate_bizjet(msg):
     """Position, altitude and ETA out of a business-aviation label 44 report."""
@@ -1001,10 +1027,27 @@ def translate_bizjet(msg):
         return None
     summary = "Position report" + (f", {feet(int(alt) * 100)}" if alt else "")
     return result("position", summary,
-                  [latlon(lat, lon),
+                  [bizjet_route(msg["text"][:2], fields),
+                   latlon(lat, lon),
                    f"Reported {hhmmss(over)}" if over else None,
                    f"ETA {hhmmss(eta)}" if eta and int(eta[:2]) < 24 else None],
                   position={"lat": lat, "lon": lon, "src": "Business-aviation label 44"})
+
+
+def bizjet_route(group, fields):
+    """Origin and destination, when both decode to an airport we know.
+
+    A rare cipher character - a bit error rather than alphabet - leaves a hole, and a hole
+    means the code is incomplete rather than wrong, so nothing is shown for it. 97% of
+    reports decode both ends cleanly."""
+    key = BIZJET_LETTERS.get(group)
+    if not key:
+        return None
+    letters = dict(zip(*key))
+    ends = ["".join(letters.get(c, "?") for c in fields[i]) for i in (3, 4)]
+    if any("?" in e or not airports.city(e) for e in ends):
+        return None
+    return f"Flight {ends[0]} \u2192 {ends[1]}"
 
 
 # ----------------------------------------------------------------- dispatcher
