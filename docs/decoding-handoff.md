@@ -190,7 +190,7 @@ unread. The groups, and what would open each:
 | Lufthansa 1L | 227 | Structured (low-entropy columns, repeated runs) but no known plaintext attaches | A capture where these flights send the same facts in clear, or Lufthansa's own documentation |
 | Business-aviation residue | ~20 | Messages missing rare key characters, plus one clear key-00 `AMI02` event (label 88) the reader doesn't know | Months more data, a capture from another receiver (the keys are shared), or SATCOM uplinks per the paper (needs an L-band receiver) |
 | Southwest 37 residue | 351 | Key groups 14, 17-19 not in the table, and odd variants | More data per group; the H1 crib method would work once enough pairs exist |
-| Not yet attempted | ~3,000 | Clear text with visible structure: label 83 CSV with route, position and altitude (404), Air Canada 4R (426) and 4T `AGFSR` (235), label 33 `Q,H,...` with route (360), 49 (115), 19 `POS` (73), 32 `APR` with position (64), 14 and 16 in a label-15-like `(2` layout (244), 10 `WXREQ` (157), 3S/3J, 4N/4P | Nothing new - the archive and the evidence bar. The next session's work |
+| Not yet attempted | ~1,400 | Done 21 October: label 83, Porter 19, Turkish 16, Cathay 32 (route and altitude only - its position is stale), Air Canada 4R and 4T (AGFSR now with its own position, 1.2 km from ADS-B; ETA), runway data on 33 and 4N, FedEx 10. Left: 49 `ERDC` (115), 14 and 16 `(2` layouts (244), 3S/3J (170), 4P (56), Frontier/SkyWest `Q,H,...` on 33 and 4T, the rest of 10 | Nothing new - the archive and the evidence bar |
 | Not worth chasing | small | Air Canada 4s `DFR` (flight and day only), RB, free-form 5Z | - |
 
 Two families are held back on purpose. American's A39 `C1TRP` trip reports (460) carry a

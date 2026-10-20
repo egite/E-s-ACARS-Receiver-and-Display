@@ -444,6 +444,78 @@ def translate_afn(text):
                   details, position=position)
 
 
+# Position reports in airline layouts found on 21 October, each checked against the
+# aircraft's own ADS-B over the archive.
+#
+#   83  KSFO,KEWR,301603, 40.39,-105.17,39002,261,  80.5, 43800       United, ANA, KLM
+#       route, day/time, position, altitude, calibrated airspeed, heading, fuel on board.
+#       403 reports: position 0.6 km from ADS-B, altitude 37 ft; the heading sits 7 degrees
+#       from the ADS-B track (wind drift); the airspeed, turned into true airspeed through the
+#       standard atmosphere, is 25 kt from ADS-B ground speed - a wind's worth - at Mach
+#       0.59-0.86; and the fuel falls in all 47 consecutive pairs, ~10,800 lb an hour, a
+#       widebody's burn.
+#   16  /N041.70/W103.14/30002/0110/2317/11972/2347/                     Turkish
+#       position, altitude, -, report time, fuel, ETA. 55 reports: position 1.7 km, altitude
+#       18 ft, the first time 0.65 min before receipt and the second 37 min ahead; fuel
+#       falls in all 33 pairs. Its units aren't known, so it is shown as sent.
+#   19  POS SNY    /1643/14253/FL359/190041                              Porter
+#       waypoint, time, fuel, flight level, wind. 64 reports: the wind shrinks the spread of
+#       ground speeds from 33 kt to 11 through the wind triangle; fuel falls in all 19 pairs
+#       at ~3,750 lb an hour, an Embraer E2's burn.
+#   32  APR,V03,CX 209120260930 1,KDFW,PANC,N040.175,W105.568,40026, 483  Cathay
+#       route, position, altitude, ground speed - but the position is 33 km behind ADS-B at
+#       the median with no time to say when it was taken, so like American's trip reports it
+#       is left off the map; altitude (14 ft) and route are shown.
+
+def translate_position_formats(label, text, airline):
+    if label == "83":
+        m = re.match(r"(" + ICAO_AP + "),(" + ICAO_AP + r"),\d\d(\d\d)(\d\d), *(-?\d+\.\d+), *(-?\d+\.\d+), *(\d+),"
+                     r" *(\d+), *(-?) *([\d.]+), *(\d+)", text)
+        if m:
+            lat, lon, heading = float(m[5]), float(m[6]), float(m[10]) * (-1 if m[9] else 1) % 360
+            return result("position", f"Position report at {m[3]}:{m[4]} UTC, {feet(int(m[7]))}",
+                          [f"Flight {m[1]} \u2192 {m[2]}", latlon(lat, lon), f"Calibrated airspeed {int(m[8])} kt",
+                           f"Heading {heading:.0f}\u00b0", f"Fuel on board {int(m[11]):,} lb"],
+                          position={"lat": lat, "lon": lon, "src": f"Label 83 report"})
+    if label == "16":
+        m = re.match(r"/([NS])(\d+\.\d+)/([EW])(\d+\.\d+)/(\d{5})/\d{4}/(\d{4})/(\d+)/(\d{4})/", text)
+        if m:
+            lat = float(m[2]) * (-1 if m[1] == "S" else 1)
+            lon = float(m[4]) * (-1 if m[3] == "W" else 1)
+            return result("position", f"Position report at {hhmmss(m[6])}, {feet(int(m[5]))}",
+                          [latlon(lat, lon), f"ETA {hhmmss(m[8])}", f"Fuel {int(m[7]):,} (airline units)"],
+                          position={"lat": lat, "lon": lon, "src": "Label 16 report"})
+    if label == "19":
+        m = re.match(r"POS (\S+) */(\d{4})/(\d+)/FL(\d{3})/(\d{3})(\d{3})", text)
+        if m:
+            return result("position", f"Position report over {m[1].lstrip('>')} at {hhmmss(m[2])}, FL{int(m[4])}",
+                          [f"Fuel on board {int(m[3]):,} lb", f"Wind {m[5]}\u00b0 at {int(m[6])} kt"])
+    if label == "32":
+        m = re.match(r"APR,V\d\d,.*?,(" + ICAO_AP + "),(" + ICAO_AP + r"),[NS][\d.]+,[EW][\d.]+,(\d+)", text)
+        if m:
+            return result("position", f"Position report, {feet(int(m[3]))}", [f"Flight {m[1]} \u2192 {m[2]}"])
+    if label == "4T":
+        m = re.match(r"ETA \w+/\d\d/\d\d (\w{3,4}) (\d\d)(\d\d)Z", text)
+        if m:
+            return result("flight", f"ETA {m[2]}:{m[3]} UTC at {m[1]}")
+    if label == "4R":
+        # Air Canada: "C311 ... 2<text>" is crew free text; "C32.. 1OS?FL" a coded report whose
+        # flight level matches ADS-B but whose other numbers have nothing to check them by.
+        m = re.match(r"C\w+\s+\d(OS[A-Z]FL) (\w+)/\d\d/\d\d (\w{3}) (\w{3}) +\d+ (\d\d)(\d\d)Z (\d{3})/", text)
+        if m:
+            return result("flight", f"Flight report at {m[5]}:{m[6]} UTC, FL{int(m[7])}", [f"Flight {m[3]} \u2192 {m[4]}"])
+        m = re.match(r"C3\d\d\s+\d(.+)", text, re.S)
+        if m and re.search(r"[A-Z]{2,}", m[1]):
+            return result("crew", f"Crew message: \u201c{reflow([l for l in re.split(r'[\r\n]+', m[1]) if l.strip()])}\u201d")
+    if label == "10" and airline == "FX":
+        m = re.search(r"/WXREQ\s*/TYP \d/STA (\w{3,4})", text)
+        if m:
+            return result("request", f"Crew requested weather for {m[1]}")
+        if re.search(r"/ACKMSG/", text):
+            return result("link", "Acknowledged a message from the airline")
+    return None
+
+
 def translate_arinc620(label, text):
     """Standard downlinks whose text ARINC 620 fixes. The decoder has already taken off the
     message number and flight identifier (the specification's characters 1-10), so the text
@@ -1979,12 +2051,27 @@ def translate(msg, raw=None):
         r = translate_label80(msg)
         if r:
             return r
-    m = re.match(r"AGFSR (\w+)/\d\d/\d\d/(\w{3})(\w{3})/(\d{4})Z/\d+/(\d{4}\.\d[NS]\d{5}\.\d[EW])/(\d{3})/[^/]*/\d*/\d*/([MP]\d\d)/(\d{3})(\d{3})", text)
-    if m:
-        temp = int(m.group(7)[1:]) * (-1 if m.group(7)[0] == "M" else 1)
-        return result("position", f"Position report at {hhmmss(m.group(4))}, FL{int(m.group(6))}",
-                      [f"Flight {m.group(2)} → {m.group(3)}", pos_detail(msg), f"Outside air {temp}°C",
-                       f"Wind {m.group(8)}° at {int(m.group(9))} kt"])
+    other = translate_position_formats(label, text, airline)
+    if other:
+        return other
+    if text.startswith("AGFSR "):
+        # Air Canada's position report. Fields are slash-separated and unset ones are dashes
+        # or blanks ("---", "M3 ", "------"), so each is taken only when it is there.
+        f = [x.strip() for x in text.split("/")]
+        if len(f) > 6 and re.fullmatch(r"\w{6}", f[3]) and re.fullmatch(r"\d{4}Z", f[4]):
+            level = f"FL{int(f[7])}" if len(f) > 7 and f[7].isdigit() else None
+            temp = re.fullmatch(r"([MP])(\d{1,2})", f[11]) if len(f) > 11 else None
+            wind = re.fullmatch(r"(\d{3})(\d{3})", f[12]) if len(f) > 12 else None
+            # Position in degrees and decimal minutes: 1.2 km from ADS-B at the median over 170.
+            p = re.fullmatch(r"(\d\d)(\d\d\.\d)([NS])(\d{3})(\d\d\.\d)([EW])", f[6])
+            where = None
+            if p:
+                where = {"lat": (int(p[1]) + float(p[2]) / 60) * (-1 if p[3] == "S" else 1),
+                         "lon": (int(p[4]) + float(p[5]) / 60) * (-1 if p[6] == "W" else 1), "src": "Air Canada AGFSR"}
+            return result("position", f"Position report at {hhmmss(f[4][:4])}" + (f", {level}" if level else ""),
+                          [f"Flight {f[3][:3]} \u2192 {f[3][3:]}", latlon(where["lat"], where["lon"]) if where else pos_detail(msg),
+                           f"Outside air {int(temp[2]) * (-1 if temp[1] == 'M' else 1)}\u00b0C" if temp else None,
+                           f"Wind {wind[1]}\u00b0 at {int(wind[2])} kt" if wind else None], position=where)
     if label == "4A":
         r = translate_label4a(msg)
         if r:
@@ -2015,7 +2102,10 @@ def translate(msg, raw=None):
     if m:
         airports = ", ".join(re.findall(ICAO_AP, m.group(1)))
         return result("request", f"Crew requested weather for {airports}")
-    m = re.match(r"\d+,[A-Z],\d\d,(" + ICAO_AP + "),(" + ICAO_AP + r"),(\d\d[LRC]?)/", text)
+    m = re.match(r"(?:LDR\d\d,)?\d+,[A-Z],\d\d,(" + ICAO_AP + "),(" + ICAO_AP + r"),(\d\d[LRC]?)/", text)
+    # Also origin, destination, landing airport and runway further into the line, ICAO or
+    # IATA ("...,KLAS,KMSP,KMSP,12R/" from Sun Country, "...,RFD,LAX,LAX,06R/").
+    m = m or re.search(r"\d+,C,.*?,([A-Z]{3,4}),([A-Z]{3,4}),\2,(\d\d[LRC]?)/", text)
     if m:
         return result("flight", f"Runway data for {m.group(2)} runway {m.group(3)}", [f"Flight {m.group(1)} → {m.group(2)}"])
     if label == "10" and text.startswith("/N"):

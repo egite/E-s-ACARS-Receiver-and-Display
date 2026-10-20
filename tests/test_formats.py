@@ -182,3 +182,20 @@ def test_afn_logon():
                             "Offers ADS-C v1, CPDLC v1"]
     peripheral = read("H1", "#M1B/B0 KUSA.AFN/FMHUAL1767,.N77261,,133405/FPON42489W103082,1/FCOATC,01/FCOADS,0185F5")
     assert peripheral["summary"] == "Datalink logon to ATC centre KUSA" and peripheral["position"]
+
+
+def test_airline_position_formats_21_october():
+    def read(label, flight, text):
+        return translate.translate({"label": label, "flight": flight, "kind": "acars", "text": text})
+    r = read("83", "UA1149", "KSFO,KEWR,301603, 40.39,-105.17,39002,261,  80.5, 43800")
+    assert r["summary"] == "Position report at 16:03 UTC, 39,002 ft"
+    assert r["details"][2:] == ["Calibrated airspeed 261 kt", "Heading 80°", "Fuel on board 43,800 lb"]
+    assert read("83", "UA0026", "EGLL,KDEN,302004, 41.97,-102.80,28000,301,-153.1, 26800")["details"][3] == "Heading 207°"
+    r = read("19", "PD0671", "POS SNY    /1643/14253/FL359/190041")
+    assert r["details"] == ["Fuel on board 14,253 lb", "Wind 190° at 41 kt"]
+    r = read("4T", "AC1073", "AGFSR AC1073/30/30/YULDEN/1601Z/141/4005.2N10418.0W/150/DESCEN/0043/0077/M3 /056013/0249/220/30 /1205/1223/    /    ")
+    assert r["summary"] == "Position report at 16:01 UTC, FL150" and r["position"]["src"] == "Air Canada AGFSR"
+    assert "Outside air -3°C" in r["details"]
+    assert read("32", "CX2091", "APR,V03,CX 209120260930 1,KDFW,PANC,N040.175,W105.568,40026, 483").get("position") is None
+    assert read("33", "SY9036", "331,C,--- --.-,---- --.-,,013.2,30,KLAS,KMSP,KMSP,12R/,12L/,30L/,5")["summary"] \
+        == "Runway data for KMSP Minneapolis runway 12R"
