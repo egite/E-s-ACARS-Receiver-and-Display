@@ -529,6 +529,19 @@ def translate_position_formats(label, text, airline):
         m = re.match(r"MET\d\d(\w{3,4})$", text)
         if m:
             return result("request", f"Crew requested weather for {m[1]}")
+    if label == "14" and airline == "F9":
+        # Frontier: count, flags, airport, HHMMSS, a value. The time falls 33-109 minutes after
+        # receipt (10th-90th percentile), so it is the ETA at that airport; the value repeats
+        # across a flight's messages and has nothing to check it by, so it isn't shown.
+        m = re.match(r"\d,[^,]*,[^,]*,[YN],[YN],[YN],(" + ICAO_AP + r"),(\d\d)(\d\d)(\d\d),", text)
+        if m and int(m[2]) < 24:
+            return result("flight", f"ETA {m[2]}:{m[3]}:{m[4]} UTC at {m[1]}")
+    if label == "4P":
+        # The request for the runway data that comes back as 4N: 35 of 56 are followed by a
+        # 4N from the same flight, 40 s later at the median.
+        m = re.match(r"\d+,C,,\d,\d\d/\d\d,([A-Z]{3,4}),([A-Z]{3,4}),", text)
+        if m:
+            return result("request", f"Crew requested landing data for {m[2]}", [f"Flight {m[1]} \u2192 {m[2]}"])
     if label in ("3J", "3S"):
         # Sent half a minute before receipt, all 3J from Denver in the climb; what they are
         # for isn't known, so only the route and time are given.

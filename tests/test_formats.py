@@ -221,3 +221,10 @@ def test_more_formats_21_october():
     assert read("33", "OO0000", "Q,H,30SEP26 12:55:42,22120661,30SEP,5829,KBIL,KDEN,4976,KDEN,59965,4200,35L,6,35R,6,,0,N")["summary"] \
         == "Runway data for KDEN Denver runway 35L"
     assert read("10", "BA09SW", "MET01KMSP")["summary"].startswith("Crew requested weather for KMSP")
+
+
+def test_frontier_eta_and_landing_data_request():
+    def read(label, flight, text):
+        return translate.translate({"label": label, "flight": flight, "kind": "acars", "text": text})
+    assert read("14", "F92141", "5,,,Y,N,Y,KPHX,191242,7275,,,,,")["summary"].startswith("ETA 19:12:42 UTC at KPHX")
+    assert read("4P", "UP7831", "285,C,,1,09/30,RFD,LAX,,C083")["summary"].startswith("Crew requested landing data for LAX")
