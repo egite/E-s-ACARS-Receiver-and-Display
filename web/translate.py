@@ -748,6 +748,37 @@ def translate_pnm4(text):
     return result("data", f"{name} ({plural(len(rows), 'sample')}), {span}", details)
 
 
+# United's A86 report (header "A86BBSM25-H200-0003"): tail, date and time, flight, phase and
+# route, then samples five seconds apart:
+#
+#   0811-00001100 27000206206CLSDCLSD 41 41 39 381  -260.090.083643550.694 79 79
+#
+# Altitude, static air temperature and Mach (the 27000, -26 and 0.694 above) are read; the
+# rest - including the two CLSD valve states - is not. Over 5,222 samples temperature
+# tracks altitude at r=-0.985, and on the 473 reports with an ADS-B fix the true airspeed
+# that Mach and temperature give differs from ADS-B ground speed by 17 kt at the median,
+# one wind's worth, against 64 kt with the reports shuffled. The last sample's altitude
+# sits within 380 ft of ADS-B: the samples are a window recorded shortly before sending.
+A86_ROW = re.compile(r"\d{4}[-0]00001100 +(\d{4,5})\d{6}(?:CLSD|OPEN){2} +\d+ +\d+ +\d+ +\d+ +(-?\d+?)\d\.\d\d\d\.\d\d\d{6}(\d\.\d{3}) ")
+
+
+def translate_a86(text):
+    text = re.sub(r"#DFB|[\r\n]", "", text)
+    if not re.match(r"A86BB", text):
+        return None
+    tail = re.search(r"(N\d{1,5}[A-Z]{0,2}) \d{8}", text)
+    leg = re.search(r"\d(ER|CL|CR|DC|TO|IC)(" + ICAO_AP + ")(" + ICAO_AP + r")\d", text)
+    rows = A86_ROW.findall(text)
+    name = "Aircraft monitoring report A86" + (f", {PHASE_CODES[leg[1]]}" if leg else "")
+    details = [f"Flight {leg[2]} → {leg[3]}" if leg else None, tail[1] if tail else None]
+    if not rows:
+        return result("data", name, details)
+    first, last = rows[0], rows[-1]
+    span = f"{int(first[0]):,} ft" + ("" if first[0] == last[0] else f" → {int(last[0]):,} ft")
+    details += [f"Mach {float(first[2]):.3f}", f"Outside air {int(first[1])}°C"]
+    return result("data", f"{name} ({plural(len(rows), 'sample')}), {span}", details)
+
+
 # Delta's APM cruise performance report: comma-separated, most fields padded with empty
 # ones, after a header of tail, flight (plus one digit), route and date/time:
 #
@@ -798,7 +829,7 @@ def translate_monitoring(msg):
     tagged = translate_tagged_weather(text)
     if tagged:
         return tagged
-    for reader in (translate_hydn, translate_pnm4, translate_delta_apm):
+    for reader in (translate_hydn, translate_pnm4, translate_delta_apm, translate_a86):
         report = reader(text)
         if report:
             return report

@@ -87,3 +87,13 @@ def test_airbus_header_with_c1_tail():
     r = translate.translate(msg)
     assert r["summary"] == "Aircraft monitoring report A37"
     assert r["details"] == ["Flight KORF Norfolk → KDEN Denver", "Generated 15:19:36 UTC"]
+
+
+def test_united_a86_report():
+    msg = {"label": "H1", "sublabel": "DF", "flight": "UA2736", "kind": "acars",
+           "text": "A86BBSM25-H200-0003\r\nN37547 3009133516092341\r\n27365ERKGPIKDEN60A89660B311\r\n60B-      \r\n"
+                   "0811-00001100 27000206206CLSDCLSD 41 41 39 381  -260.090.083643550.694 79 79\r\n"
+                   "1311-00001100 27002207207CLSDCLSD 41 41 39 391  -260.090.083573500.693 79 79\r\n"}
+    r = translate.translate(msg)
+    assert r["summary"] == "Aircraft monitoring report A86, en route (2 samples), 27,000 ft → 27,002 ft"
+    assert r["details"] == ["Flight KGPI Kalispell → KDEN Denver", "N37547", "Mach 0.694", "Outside air -26°C"]
