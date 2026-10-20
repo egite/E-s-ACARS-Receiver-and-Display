@@ -925,6 +925,35 @@ def translate_waypoint_report(line, dep, arr):
                    f"Wind {int(wind_dir)}\u00b0 at {int(wind_kt)} kt"])
 
 
+# Delta/Northwest label 48, a form of six four-character slots and a Y/N flag:
+#
+#   301848 KLAS KDTW7 / /FN 0470 / 1274                    N
+#   062048 KSFO KDTW6 / 0SLC0RDU                N
+#
+# Each filled slot is a flight number or an airport (ICAO, or IATA behind a 0), and nearly
+# always only the first. Read as the crew asking about onward connections at the
+# destination, on this evidence: of the requested numbers whose flight this receiver also
+# heard, 9 of 10 depart the asking flight's destination, against 12% for a heard flight
+# number picked at random. The Y/N flag is unidentified.
+
+def translate_connection_request(text, orig, dest):
+    m = re.search(r"^([0-9A-Z ]{24})([YN])\s*$", text.replace("\r", ""), re.M)
+    if not m:
+        return None
+    asked = []
+    for slot in re.findall(r"....", m.group(1)):
+        if slot.isdigit():
+            asked.append(f"flight {int(slot)}")
+        elif re.fullmatch(r"K[A-Z]{3}", slot):
+            asked.append(airports.city(slot) or slot)
+        elif re.fullmatch(r"0[A-Z]{3}", slot):
+            asked.append(airports.city_iata(slot[1:]) or slot[1:])
+        elif slot.strip():
+            return None
+    summary = "Connection request" + (": " + ", ".join(asked) if asked else " (blank)")
+    return result("request", summary, [f"Flight {orig} → {dest}"])
+
+
 # Southwest label 37, a flight-data report obfuscated with a monoalphabetic substitution.
 # The first two digits of the message pick one of nine cipher alphabets; the rest of the
 # first line is a header. The body is 15 separator-delimited fields in fixed columns.
@@ -1475,6 +1504,10 @@ def translate(msg, raw=None):
         report = translate_waypoint_report(body[0].strip(), m.group(2), m.group(3)) if body else None
         if report:
             return report
+        if label == "48":
+            report = translate_connection_request(text, m.group(2), m.group(3))
+            if report:
+                return report
         # digit_ratio keeps numeric report lines - winds, positions - out of the crew bucket.
         words = [l for l in body
                  if re.search(r"[A-Z]{2,}", l) and not re.search(r"\[\s*\]", l) and len(l.strip()) > 1

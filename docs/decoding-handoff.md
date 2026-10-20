@@ -27,6 +27,7 @@ tail of rare labels.
 | Weather profile rows: American `D3B/D3M`, Alaska `E330`, Northwest `*WXR`, United `EB0032`/`EB0116`, Allegiant `ABS…BA_`, Southwest `#DFB764xx` | decoded (20 October) as weather observations: same row layouts as the formats already read, reached by matching their headers |
 | JetBlue/Air Canada H1/T8 `R721V` | report name, route, time, position and ground speed (exact against ADS-B); engine values unread |
 | United 5Z short forms (`/B6 DENDSM DSM R13`) | decoded (20 October) |
+| Delta/Northwest label 48 | connection requests (20 October): a flight number or city at the destination. 9 of 10 requested flights the receiver also heard leave the asker's destination, against 12% by chance |
 | label MA | **closed**. 6.41 bits/char against a 6.44 ceiling over the 442 messages held at the time of the test (the archive now has 1,474, all with text): encrypted or compressed, no structure to attack |
 
 Two ciphers were broken here and neither is in any public decoder. The business-aviation one
@@ -77,7 +78,11 @@ importantly, the honest way to score it. Read its docstring before changing anyt
 
 **`tools/sweep_unread.py`** - replays the archive through the translator and buckets what
 comes back unread, extracts one family with its ADS-B pairing, and scores a parser against
-the fixes. The 20 October formats were found and checked with it.
+the fixes. The 20 October formats were found and checked with it. `--crib` looks for known
+plaintext: it gathers what each message's flight said in clear elsewhere (route) and what
+ADS-B says (flight level, speed, track, time), then scores every column for that fact in
+clear or under a consistent substitution, against a shuffle. Run blind on label 37 it finds
+the route fields at 1.00 against 0.38 shuffled; on label 48 it found the route in the header.
 
 Analysis is moving to a faster machine; `docs/analysis-handoff.md` says what to copy and
 what stays on the receiver.
@@ -164,7 +169,10 @@ GitHub (label 15 layout, 5Z command codes) and the acarsonline.pbworks.com label
 2. **The 15 business-aviation messages still unread**, mostly missing one rare key
    character. The paper's 98.44% suggests the rest is reachable; a wider collection range
    or a shared capture would do it.
-3. **Rare labels** - 42, 4s, 88, 48 - a few dozen messages each, formats unknown. ARINC 623
-   would probably name them. Label 15 `(1N…` (nine messages) has one field fewer than `(2N…`
+3. **Rare labels.** Swept 20 October. Label 48 (Delta/Northwest) is a connection request and
+   now reads. The unread label 42 messages are all business-aviation ciphertext (item 2), as
+   are label 48's XA/ZD ones. Label 4S is Air Canada `DFR AC1073/30`, a flight number and
+   day with nothing to check a meaning against. Label 88's one unread message is a
+   clear key-00 business-aviation `AMI02` event the label 44 reader doesn't know. Label 15 `(1N…` (nine messages) has one field fewer than `(2N…`
    and is not read.
 4. **Label MA**: don't. It is closed on entropy.
