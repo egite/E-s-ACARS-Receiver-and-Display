@@ -754,7 +754,9 @@ def translate_arinc702(text):
 
 def translate_label44(msg):
     parts = [p.strip() for p in msg["text"].split(",")]
-    m = re.match(r"0*(ETA|POS|OFF|ON|IN)0\d$", parts[0]) if parts else None
+    # TWX and MSG turned up once the ciphered half of this traffic became readable: a TWX
+    # carries a route and little else, a MSG is free text to or from dispatch.
+    m = re.match(r"0*(ETA|POS|OFF|ON|IN|TWX|MSG)0\d$", parts[0]) if parts else None
     if not m or len(parts) < 5:
         return None
     event = m.group(1)
@@ -763,19 +765,56 @@ def translate_label44(msg):
         # The clear form gives altitude in hundreds of feet, and fuel in the last field.
         level = "on the ground" if parts[2] in ("GRD", "***") else feet(int(parts[2]) * 100) if parts[2].isdigit() else None
         eta = parts[7][:4] if re.fullmatch(r"\d{4,6}", parts[7]) else None
-        summary = ("ETA report" if event == "ETA" else "Position report") + f", {parts[3]} → {parts[4]}"
+        # A '?' marks a character the key still lacks, so the route is withheld rather than
+        # shown with a hole in it. Clear-text messages never contain one.
+        route = "" if any("?" in p for p in parts[3:5]) else f", {parts[3]} → {parts[4]}"
+        summary = ("ETA report" if event == "ETA" else "Position report") + route
         fuel = parts[8] if len(parts) > 8 and re.fullmatch(r"[\d.]+", parts[8]) else None
         return result("flight" if event == "ETA" else "position", summary,
                       [level, f"ETA {hhmmss(eta)}" if eta else None,
                        f"Fuel on board {float(fuel) * 1000:,.0f} lb" if fuel else None, pos])
+    if event in ("TWX", "MSG"):
+        route = [p for p in parts[3:5] if re.fullmatch(ICAO_AP, p)]
+        words = [p for p in parts[5:] if re.search(r"[A-Z]{3,}", p) and not re.fullmatch(r"[\d.]+", p)]
+        return result("crew" if words else "flight",
+                      ("Message to dispatch" if event == "MSG" else "Text message")
+                      + (f", {route[0]} \u2192 {route[1]}" if len(route) == 2 else ""),
+                      [f"\u201c{reflow(words)}\u201d" if words else None, pos])
     names = {"OFF": "Took off", "ON": "Landed", "IN": "Arrived at the gate"}
     time = next((p for p in parts[5:] if re.fullmatch(r"\d{4}", p)), None)
-    return result("flight", f"{names[event]}: {parts[2]} → {parts[3]}" + (f" at {hhmmss(time)}" if time else ""), [pos])
+    where = "" if any("?" in p for p in parts[2:4]) else f": {parts[2]} \u2192 {parts[3]}"
+    return result("flight", f"{names[event]}{where}" + (f" at {hhmmss(time)}" if time else ""), [pos])
 
 
 LABEL80_TYPES = {"POSRPT": "Position report", "INRANG": "In-range report", "DSPTCH": "Message to dispatch",
                  "ETARPT": "ETA report", "OUTRPT": "Left the gate", "OFFRPT": "Took off", "ONRPT": "Landed",
                  "INRPT": "Arrived at the gate", "DIVERT": "Diversion report"}
+
+
+def bizjet_other(msg, group, sep, digits):
+    """The events that aren't a position report: OFF, ETA, TWX and free-text MSG.
+
+    With both halves of the key known there is no need to parse these by column - they
+    decrypt to the same clear format translate_label44 already reads, so they are turned
+    back into plaintext and handed to it. One of them says, in full: "MSG03,N39310W101130,
+    450,KBJC,KPDK,2118,DISPATCH,N148B,DISPATCH,PDK ETA 2115".
+
+    Where the two halves of a key disagree the digits win, having been checked against
+    ADS-B to 0.43 km at the median; the letter fit only ever had a spare Z to place.
+    """
+    table = {c: str(i) for i, c in enumerate(digits)}
+    letters = BIZJET_LETTERS.get(group)
+    if letters:
+        table = {**dict(zip(*letters)), **table}
+    plain = "".join(table.get(c, "," if c == sep else "?") for c in msg["text"][2:])
+    head = re.match(r"([A-Z]{3}\d\d)(.*)", plain)
+    if not head:
+        return None
+    # An ETA runs its event straight into the position where the others put a comma.
+    # Normalise it so the clear-text parser only ever sees one shape.
+    if head.group(2)[:1] not in ("", ","):
+        plain = f"{head.group(1)},{head.group(2)}"
+    return translate_label44(dict(msg, text=plain))
 
 
 def translate_label80(msg):
@@ -987,13 +1026,13 @@ BIZJET_SHAPE = (5, 13, 3, 4, 4, 4, 4, 4, 5)
 BIZJET_LETTERS = {
     '01': ('#$*124569@CDFGHIMT\\_`cdny', 'CQOPGSHEJMFVRITDUXLNYBKWA'),
     '02': ('*/14:;<ENOXY`ehiklopqrstv|', 'FWRUBOZSPGEJXTHQIVKYCNMDLA'),
-    '03': ('!&()+.0128>@HILOSTWXdfmovw', 'LDZYEKOFJMSHCBNIVTQURWPGXA'),
+    '03': ('!&)+.0128>@HILOSTWXdfmovw', 'LDYEKOFJMSHCBNIVTQURWPGXA'),
     '04': ('%(-/7=@DGKLNZ^`iknpqrvwz', 'WEKABOCTSIXNHJVRMUPLDYGF'),
     '05': ('"#$&\'/2346?FIJLOQSTX]^_gh}', 'FYVWZMHASKQCTPRODXIENJBUGL'),
     '06': ('"13456<>?DEILMOS[_acdiosx', 'TDKRSMHQGWOJENXFVCLPYUBIA'),
     '07': (' $(*-3567?EOTXY\\]_lnrsxy{}', 'LARPMQCFXONUWSIJEYKZDVBTGH'),
-    '08': (' ,07:=?JPRW\\dfijmqsuxyz|}~', 'JPBDAEUYLVCFRHQXTNOSMGKIZW'),
-    '09': (' !%(+-.06;GHLOPQTW\\dejor|}', 'JRHKNLMDZQETSCBXYFOUGAWIPV'),
+    '08': (' ,07:=?JPRW\\dfijmqsuxyz|~', 'JPBDAEUYLVCFRHQXTNOSMGKIW'),
+    '09': (' !%(+-.0;GHLOPQTW\\dejor|}', 'JRHKNLMDQETSCBXYFOUGAWIPV'),
 }
 
 
@@ -1006,7 +1045,7 @@ def translate_bizjet(msg):
     sep, digits = key
     fields = text[2:].split(sep)
     if tuple(len(f) for f in fields) != BIZJET_SHAPE:
-        return None
+        return bizjet_other(msg, text[:2], sep, digits)
     table = {c: str(i) for i, c in enumerate(digits)}
 
     def num(field, *positions):
