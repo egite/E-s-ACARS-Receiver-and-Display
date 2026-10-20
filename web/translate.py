@@ -408,6 +408,38 @@ def translate_fmc_exchange(body):
     return None
 
 
+def translate_arinc620(label, text):
+    """Standard downlinks whose text ARINC 620 fixes. The decoder has already taken off the
+    message number and flight identifier (the specification's characters 1-10), so the text
+    starts at its character 11."""
+    if label == "Q3":  # Clock Update Advisory: time before reset, space, time after
+        m = re.fullmatch(r"(\d\d)(\d\d) (\d\d)(\d\d)", text)
+        if m:
+            return result("flight", f"Aircraft clock reset from {m[1]}:{m[2]} to {m[3]}:{m[4]} UTC")
+    if label == "QF":  # OFF/Destination Report: departure (IATA), OFF time, destination
+        m = re.match(r"([A-Z0-9 ]{3})(\d\d)(\d\d)([A-Z0-9 ]{3})", text)
+        if m and int(m[2]) < 24 and int(m[3]) < 60:
+            dep, dest = m[1].strip(), m[4].strip()
+            return result("flight", "Took off" + (f" from {dep}" if dep else "") + f" at {m[2]}:{m[3]} UTC" +
+                          (f", bound for {dest}" if dest else ""))
+    if label == "Q2":  # ETA Report: destination (IATA), ETA, fuel quantity in airline units
+        m = re.match(r"([A-Z0-9 ]{3})(\d\d)(\d\d)([ \d]{4})?(.*)", text)
+        if m and int(m[2]) < 24 and int(m[3]) < 60:
+            dest = m[1].strip() or (re.search(r"/DS (\w{3,4})", m[5]) or [None, None])[1]
+            return result("flight", f"ETA {m[2]}:{m[3]} UTC" + (f" at {dest}" if dest else ""),
+                          [f"Fuel {int(m[4])} (airline units)" if m[4] and m[4].strip() else None])
+    if label == "Q7":  # Delay Message: free text
+        return result("flight", "Delay report" + (f": “{reflow([text])}”" if text.strip() else ""))
+    if label == "HX":  # Undelivered Uplink Report: optional /addresses. then free text
+        body = re.sub(r"^/[^.]*\.", "", text).strip()
+        return result("link", "An uplink reached the aircraft but could not be passed to the system it was for",
+                      [f"“{body}”" if body else None])
+    if label == "5D":  # ATIS Request: the request is free text
+        airport = re.search(r"(?<![A-Z])(" + ICAO_AP + r")", text)
+        return result("request", f"Crew requested the ATIS for {airport[1]}" if airport else "Crew requested an ATIS")
+    return None
+
+
 def translate_posn(body):
     """ARINC 702 flight-computer position report: POSNlatlon,wpt,time,FL,next,eta,nextnext,temp,wind,..."""
     m = re.search(r"POSN([NS]?)(\d{2})(\d{2})(\d)([EW])(\d{3})(\d{2})(\d),([^,]*),(\d{6}),(\d{2,3}),([^,]*),(\d{6})?,([^,]*),([MP]\d{1,2}),(\d{4,6})", body)
@@ -1862,6 +1894,11 @@ def translate(msg, raw=None):
     oooi = {"QP": "Left the gate (OUT)", "QQ": "Took off (OFF)", "QR": "Landed (ON)", "QS": "Arrived at the gate (IN)"}
     if label in oooi:
         return result("flight", oooi[label])
+    # Fixed-column formats: keep leading blanks, and read NULs - which ARINC 620 allows for
+    # fields with no data - as the spaces they stand for.
+    spec = translate_arinc620(label, (msg.get("text") or "").replace("\x00", " ").rstrip())
+    if spec:
+        return spec
 
     if airline == "WN" and label == "37":
         return translate_southwest(msg) or result("encoded", "Southwest airline data message (encoded)")

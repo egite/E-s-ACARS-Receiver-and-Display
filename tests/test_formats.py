@@ -162,3 +162,12 @@ def test_position_report_fuel_remaining():
     r = translate.translate({"label": "H1", "flight": "UA0001", "kind": "acars",
                              "text": "POSN38317W103402,LAYLA,054019,388,KD60A,060202,OVR,M50,226075,2112834"})
     assert r["details"][-1] == "Fuel remaining 21,100 lb"
+
+
+def test_arinc620_fixed_formats():
+    def read(label, text):
+        return translate.translate({"label": label, "flight": "XX0001", "kind": "acars", "text": text})
+    assert read("Q3", "0918 0031")["summary"] == "Aircraft clock reset from 09:18 to 00:31 UTC"
+    assert read("QF", "DEN2346FAR")["summary"] == "Took off from DEN at 23:46 UTC, bound for FAR"
+    assert read("Q2", "   1656  76/DS KDEN")["summary"] == "ETA 16:56 UTC at KDEN Denver"
+    assert read("QF", "\x00\x00\x002115\x00\x00\x00OS    /FUL0892")["summary"].startswith("Took off")
