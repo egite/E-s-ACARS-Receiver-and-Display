@@ -364,8 +364,15 @@ class Archive:
 
 # What each archived line keeps: enough to re-run translation and cryptanalysis later,
 # without the decoder's raw JSON, which is bulky and adds only signal metadata we already have.
+#
+# "decoded" has to be among them. It carries what libacars made of the message - the CPDLC
+# and ADS-C content of an ARINC 622 payload - and that cannot be recovered from "text"
+# afterwards, because reading it needs the raw JSON this file deliberately drops. Leaving it
+# out made every one of those messages look undecoded on replay, and I spent a while calling
+# label BA the largest unsolved family on the strength of it. It decodes live, to WILCO.
 ARCHIVE_FIELDS = ("id", "ts", "source", "freq", "level", "noise", "errors", "icao", "reg", "flight",
-                  "direction", "gs", "label", "sublabel", "msgno", "text", "kind", "type", "position")
+                  "direction", "gs", "label", "sublabel", "msgno", "text", "decoded", "kind", "type",
+                  "position")
 
 HOT_HOURS = 48  # messages stay as live dicts this long, then go to compact JSON
 WHOLE_STORE_CACHE_SECS = 30  # how long a pass over every message is reused for
