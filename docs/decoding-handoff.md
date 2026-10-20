@@ -5,7 +5,8 @@ running since 23 September; `archive/messages/` holds 20 days of traffic at the 
 writing and keeps 120.
 
 This is about reading message *contents*. The radio side, the decoders and the web app are
-in the README; `docs/decoder-evaluation.md` covers the acarsdec/xng question.
+in the README; `docs/decoder-evaluation.md` covers the acarsdec/xng question, and
+`docs/handoff-cn62.html` (18 September) is the earlier handoff from the move to this machine.
 
 ## What reads and what doesn't
 
@@ -20,7 +21,13 @@ tail of rare labels.
 | Southwest label 37 | positions, altitude, Mach, airspeed, track, wind, temperature, fuel, weight. Origin and destination **not** read |
 | Business aviation labels 41/42/44 | fully read, cipher broken: position, altitude, times, fuel, origin, destination, plus OFF/ETA/TWX/MSG events |
 | FedEx label 16 AUTPOS | decoded |
-| label MA | **closed**. 6.41 bits/char against a 6.44 ceiling over 442 messages: encrypted or compressed, no structure to attack |
+| Label 15 position reports | decoded (20 October): general-aviation `(2N…` reports in decimal degrees with ground speed and temperature; British Airways `FST01` with route, FL, fuel, wind, heading, ground speed (within 2 kt of ADS-B) |
+| UPS `*POS` (H1) | decoded (20 October): position, FL, wind, Mach, temperature, fuel. Mach, temperature and wind reproduce the ADS-B ground speed through the wind triangle; fuel falls at a 757's burn |
+| FedEx `PO6` (H1) | decoded (20 October): route, time, FL, Mach, air temperatures, phase, position (2 km from ADS-B). A field that looked like heading matched the ADS-B track a third of the time and is withheld |
+| Weather profile rows: American `D3B/D3M`, Alaska `E330`, Northwest `*WXR`, United `EB0032`/`EB0116`, Allegiant `ABS…BA_`, Southwest `#DFB764xx` | decoded (20 October) as weather observations: same row layouts as the formats already read, reached by matching their headers |
+| JetBlue/Air Canada H1/T8 `R721V` | report name, route, time, position and ground speed (exact against ADS-B); engine values unread |
+| United 5Z short forms (`/B6 DENDSM DSM R13`) | decoded (20 October) |
+| label MA | **closed**. 6.41 bits/char against a 6.44 ceiling over the 442 messages held at the time of the test (the archive now has 1,474, all with text): encrypted or compressed, no structure to attack |
 
 Two ciphers were broken here and neither is in any public decoder. The business-aviation one
 is documented in the literature (see Prior art); the Southwest one is not.
@@ -49,12 +56,14 @@ wrong alphabet produces real-looking airport codes; it does not produce r=0.999.
 
 **`archive/messages/*.jsonl`** — every frame received, one file per UTC day, each line the
 message plus `adsb`: the aircraft's position, altitude, ground speed and track at that
-moment. The ADS-B pairing is what makes an unfamiliar format solvable.
+moment. The ADS-B pairing is what makes an unfamiliar format solvable. The archive is
+gitignored, so it exists only on this machine; a clone of the repo has none of it.
 
 One caveat when replaying it. `decoded` - what libacars made of an ARINC 622 payload - was
-only added to the archived fields on 19 October, and it cannot be recovered from `text`
-afterwards because reading it needs the decoder's raw JSON the archive drops. Files written
-before that date replay every CPDLC message as unread. Measuring the replay rather than the
+only added to the archived fields with the restart late on 19 October local time, so it
+first appears in the `2026-10-20` UTC file, and it cannot be recovered from `text`
+afterwards because reading it needs the decoder's raw JSON the archive drops. Every file
+up to and including `2026-10-19` replays every CPDLC message as unread. Measuring the replay rather than the
 live pipeline is how label BA came to be called the largest unsolved family at 580 messages
 a day, when it had been decoding to WILCO all along.
 
@@ -65,6 +74,13 @@ they turn "is this a real code" into "does this route pass near where the aircra
 
 **`tools/crack_routes.py`** — the attack on the obfuscated route fields and, more
 importantly, the honest way to score it. Read its docstring before changing anything.
+
+**`tools/sweep_unread.py`** - replays the archive through the translator and buckets what
+comes back unread, extracts one family with its ADS-B pairing, and scores a parser against
+the fixes. The 20 October formats were found and checked with it.
+
+Analysis is moving to a faster machine; `docs/analysis-handoff.md` says what to copy and
+what stays on the receiver.
 
 ## Pitfalls that cost real time
 
@@ -123,6 +139,16 @@ dot-padded registration, hex application data, CRC. Character-oriented ATS is AR
 which we do not have. Our label 44 has no slash after its identifier so it is neither, which
 fits it being an airline's own format.
 
+## What the unread pile is, measured
+
+Sweeping the archive through the translator on 20 October (ARINC 622 messages excluded, since they
+only decode live) left about 95,000 of 1.3 million messages without a specific reading. Nearly all
+of that is engine-monitoring continuation blocks (United, Southwest, Frontier H1/DF), which carry
+no text structure to read and are correctly left generic. The families with structure and value
+were label 15, UPS `*POS`, FedEx `PO6`, the weather-profile layouts above and the United short
+forms, and those are now read. Useful references: airframesio/acars-message-documentation on
+GitHub (label 15 layout, 5Z command codes) and the acarsonline.pbworks.com label list.
+
 ## Open, in rough order of tractability
 
 1. **Southwest label 37 origin and destination.** Fields 0 and 1, four characters each,
@@ -134,5 +160,6 @@ fits it being an airline's own format.
    character. The paper's 98.44% suggests the rest is reachable; a wider collection range
    or a shared capture would do it.
 3. **Rare labels** - 42, 4s, 88, 48 - a few dozen messages each, formats unknown. ARINC 623
-   would probably name them.
+   would probably name them. Label 15 `(1N…` (nine messages) has one field fewer than `(2N…`
+   and is not read.
 4. **Label MA**: don't. It is closed on entropy.

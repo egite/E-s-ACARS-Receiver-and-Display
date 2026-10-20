@@ -177,8 +177,8 @@ desktop notifications would need the page served over HTTPS.
 ## How translation works
 
 `web/translate.py` turns each message into a category, a one-line English summary and details. It covers
-CPDLC (via libacars), ARINC 702 flight-computer messages, many airline position/weather/OOOI formats,
-labels 44/80/4A/4T/B9/5U/QQ/SQ/SA and others. Airline monitoring reports are identified (report number,
+CPDLC (via libacars), ARINC 702 flight-computer messages, many airline position/weather/OOOI formats
+(including UPS `*POS`, FedEx `PO6` and label 15 position reports), labels 44/80/4A/4T/B9/5U/QQ/SQ/SA and others. Airline monitoring reports are identified (report number,
 route, flight phase) but their numeric contents aren't publicly documented and are left untranslated.
 `web/server.py` reassembles multi-block reports (same message number, letter suffix).
 

@@ -22,11 +22,15 @@ plausible objective, and is simply pinned away from the answer.
            Fitting and scoring on the same records flatters the result by a wide margin -
            an early version of this reported 71% that way and 66% held out.
 
-Where it stands: 71% held out over 20 days of traffic, seven of the nine key groups
-converging to the same alphabet on every run, and five of them at or above the ceiling
-(group 05 reaches 90%, group 03 and 07 85%). The four that lag - 02, 04, 08, 09 - sit near
-60%, which is well clear of chance but not good enough to put an airport on screen, so
-web/translate.py still leaves those two fields alone.
+Where it stands: shipped. All nine alphabets are in web/translate.py as BIZJET_LETTERS and
+the routes are on screen. The held-out score is 71% against the 78% ceiling, and it was
+checks with no geometric blind spot that settled it, not this objective: every one of the
+2,902 codes the alphabets produce over 1,492 reports is a real airport, the fields are
+recognisably one fleet's network with reciprocal pairs at matching volumes, and where two
+independently fitted alphabets read the same aircraft's flight within the same hour they
+name the same pair 95% of the time. A wrong alphabet does not do that. The groups that
+score lower here fly routes the great-circle test is blind to, not routes read wrongly.
+The reports still unread are missing a rare key character, not an alphabet.
 
 The objective does rank candidates correctly: given two alphabets for the same group, the
 one scoring higher is the better answer, checked side by side on identical rows. What was

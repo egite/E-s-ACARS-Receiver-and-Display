@@ -392,6 +392,7 @@ UA_CODES = {
     "B6": "Crew requested landing performance data",
     "R3": "Crew requested a Howgozit (fuel and schedule progress) report",
     "C3": "Crew requested a gate assignment",
+    "C4": "Crew message to dispatch",
     "ET": "Estimated arrival time report",
     "33": "Avionics system configuration report",
     "14": "Takeoff (OFF) report",
@@ -403,6 +404,21 @@ UA_CODES = {
 
 
 def translate_united_slash(msg):
+    short = re.match(r"/(\w\w) ([A-Z]{3})([A-Z]{3})(?:\s+(.*))?$", msg["text"], re.S)
+    if short and short.group(1) in UA_CODES:
+        code, orig, dest, rest = short.groups()
+        rest = rest or ""
+        details = [f"Flight {orig} → {dest}"]
+        if code == "C4" and rest.strip():
+            return result("crew", f"Crew message to dispatch: “{reflow(rest.splitlines())}”", details)
+        summary = UA_CODES[code]
+        rwy = re.match(r"([A-Z]{3}) R(\d\d[LRC]?)", rest)
+        if code == "B6" and rwy:
+            summary += f" for {rwy.group(1)} runway {rwy.group(2)}"
+        if code == "C3":
+            summary = f"Crew requested a gate assignment at {dest}"
+        cat = "request" if code in ("B6", "R3", "C3") else "flight" if code in ("ET", "13", "14", "15", "16") else "data"
+        return result(cat, summary, details)
     m = re.match(r"/(\w\w) (.{2,18}?)\s*/ ?(" + ICAO_AP + r")? ?(" + ICAO_AP + r")? ?(\d\d)? ?(\d{6})?(.*)", msg["text"], re.S)
     if not m:
         return None
@@ -482,12 +498,15 @@ def _signed(sign, digits, tenths=False):
 
 def weather_samples(text):
     """Returns (origin, destination, [sample dicts]) for known weather-observation formats, or None."""
+    text = re.sub(r"^#DFB", "", text)  # H1 messages carry the sublabel inline when the decoder didn't split it
     # Southwest ++765xx/++865xx (documented AMDAR layout): lat DDMM.m, lon, DDHHMM, alt ft, temp °C, wind, phase
+    # United EB0116AB_ carries the same sample rows after a comma-separated header.
     m = re.match(r"\+\+\d+,[^,]*,[^,]*,\d{6},[^,]*,(" + ICAO_AP + "),(" + ICAO_AP + ")", text) or \
         re.match(r"ABS\d{3}[A-Z]{2}_\S+?,[^,]*,[^,]*,(" + ICAO_AP + "),(" + ICAO_AP + ")", text) or \
-        re.match(r"(?:[^\n]*\n)?()()[NS]\d{4}\.\d,[EW]\d{5}\.\d,\d{6},\d+,", text)  # continuation block: samples only
+        re.match(r"EB\d{4}AB_[^\r\n]*?,(" + ICAO_AP + "),(" + ICAO_AP + "),", text) or \
+        re.match(r"(?:[^\n]*\n)?()()[NS]\d{4}\.\d,[EW]\d{5}\.\d,\d{6}, ?\d+,", text)  # continuation block: samples only
     if m:
-        rows = re.findall(r"([NS])(\d{2})(\d{2}\.\d),([EW])(\d{3})(\d{2}\.\d),\d\d(\d{4}),(\d+), ?(-?\d+\.\d),(\d{3}),(\d{3}),(\w\w)", text)
+        rows = re.findall(r"([NS])(\d{2})(\d{2}\.\d),([EW])(\d{3})(\d{2}\.\d),\d\d(\d{4}), ?(\d+), ?(-?\d+\.\d),(\d{3}),(\d{3}),(\w\w)", text)
         samples = [{"lat": (int(a) + float(b) / 60) * (-1 if ns == "S" else 1),
                     "lon": (int(c) + float(d) / 60) * (-1 if ew == "W" else 1), "time": t, "alt": int(alt),
                     "temp": float(temp), "wdir": int(wd), "wspd": int(ws),
@@ -512,15 +531,50 @@ def weather_samples(text):
                    for s1, la, s2, lo, t, alt, sg, td, tt, wd, ws in rows]
         return m.group(1), m.group(2), samples
     # Southwest 764xx, Alaska D3M, Delta/Northwest WX02: N39679W104669 1528 1033 P011 287021 (alt in tens of feet)
-    m = re.match(r"\d{5}\r?\n\d\dE\d\d(" + ICAO_AP + ")(" + ICAO_AP + ")", text) or \
+    # American D3B/D3M: the same rows after IATA codes with a space ("D3M130ORD DEN "), temperature in tenths
+    # (M107 at 20,000 ft is -10.7°C; -107 is not a temperature).
+    american = re.match(r"D3[BM]\d{3}([A-Z]{3}) ([A-Z]{3}) N\d{5}W", text)
+    m = american or re.match(r"\d{5}\r?\n\d\dE\d\d(" + ICAO_AP + ")(" + ICAO_AP + ")", text) or \
         re.match(r"D3M\d{3}(" + ICAO_AP + ")(" + ICAO_AP + r")N\d{5}W", text) or \
         re.search(r"WX\d\dEN\d\d(" + ICAO_AP + ")(" + ICAO_AP + ")", text)
     if m:
-        tenths = text.lstrip("/ ").startswith(("WX", "A3", "A2")) or "/WX" in text[:60]  # Delta format uses tenths
+        tenths = bool(american) or text.lstrip("/ ").startswith(("WX", "A3", "A2")) or "/WX" in text[:60]  # Delta format uses tenths
         rows = re.findall(r"N(\d{5})W(\d{6})(\d{4})(\d{4})([MP])(\d{3})(\d{3})(\d{3})", text)
         samples = [{"lat": int(la) / 1000, "lon": -int(lo) / 1000, "time": t, "alt": int(alt) * 10,
                     "temp": _signed(sg, tv, tenths), "wdir": int(wd), "wspd": int(ws)}
                    for la, lo, t, alt, sg, tv, wd, ws in rows]
+        return m.group(1), m.group(2), samples
+    # Alaska E330: E330KSEAKDEN then N40591W106515 0535 3033 M034 248023 G0009; continuation rows carry no time
+    m = re.match(r"E\d{3}(" + ICAO_AP + ")(" + ICAO_AP + r")N\d{5}W", text)
+    if m:
+        samples, t = [], ""
+        for la, lo, when, alt, sg, tv, wd, ws in re.findall(r"N(\d{5})W(\d{6})(\d{4})?(\d{4})([MP])(\d{3})(\d{3})(\d{3})G", text):
+            t = when or t
+            samples.append({"lat": int(la) / 1000, "lon": -int(lo) / 1000, "time": t, "alt": int(alt) * 10,
+                            "temp": _signed(sg, tv), "wdir": int(wd), "wspd": int(ws)})
+        return m.group(1), m.group(2), samples
+    # Northwest *WXR: N40301W107444 0910 371 -505 197 048 00 (flight level, temperature in tenths); no route
+    if text.startswith("*WXR"):
+        rows = re.findall(r"N(\d{5})W(\d{6})(\d{4})(\d{3})([-+ ]\d{3})(\d{3})(\d{3})", text)
+        samples = [{"lat": int(la) / 1000, "lon": -int(lo) / 1000, "time": t, "alt": int(level) * 100,
+                    "temp": int(temp) / 10, "wdir": int(wd), "wspd": int(ws)}
+                   for la, lo, t, level, temp, wd, ws in rows]
+        return None, None, samples
+    # United EB0032AA_: reg, route, then " 40370-1053961602 39000-5162000530107": lat, lon, HHMM, alt ft, temp tenths, wind
+    m = re.match(r"EB\d{4}AA_ \S+ (" + ICAO_AP + ")(" + ICAO_AP + ")", text)
+    if m:
+        rows = re.findall(r"(-?\d{5})(-?\d{6})(\d{4}) (\d{5})([-+ ]\d{3})(\d{3})(\d{3})", text)
+        samples = [{"lat": int(la) / 1000, "lon": int(lo) / 1000, "time": t, "alt": int(alt), "temp": int(temp) / 10,
+                    "wdir": int(wd), "wspd": int(ws)} for la, lo, t, alt, temp, wd, ws in rows]
+        return m.group(1), m.group(2), samples
+    # Allegiant ABS071BA_: header line with tail and route, rows " 39750-1058341328 38012-513195 54": lat, lon, HHMM,
+    # alt ft, temp (tenths, the tenths digit sometimes missing), wind direction, wind speed
+    m = re.match(r"ABS\d{3}BA_\s*\S+\s+\d+(" + ICAO_AP + ")(" + ICAO_AP + ")", text)
+    if m:
+        rows = re.findall(r"(-?\d{5})(-?\d{6})(\d{4}) (\d{5})([-+ ]\d\d)([\d-])(\d{3}) ?(\d{2,3})", text)
+        samples = [{"lat": int(la) / 1000, "lon": int(lo) / 1000, "time": t, "alt": int(alt),
+                    "temp": int(td) + (int(tt) / 10 if tt.isdigit() else 0) * (-1 if td.startswith("-") else 1),
+                    "wdir": int(wd), "wspd": int(ws)} for la, lo, t, alt, td, tt, wd, ws in rows]
         return m.group(1), m.group(2), samples
     return None
 
@@ -1089,6 +1143,135 @@ def bizjet_route(group, fields):
     return f"Flight {ends[0]} \u2192 {ends[1]}"
 
 
+# ------------------------------------------------- label 15 position reports
+# Label 15 is the general-aviation position report. Two shapes seen here, both with coordinates in
+# decimal degrees (the documented layout; a degrees-and-minutes reading is ruled out by reports whose
+# "minutes" would exceed 59).
+#
+#   (2N41387W104423245 48390-55(Z      lat 41.387 lon -104.423, then 245, 48, 390, -55
+#   (2N38251W122421OFF0812190755E1919------- (Z   an OFF event: date, time (the letter-and-digits after it unknown)
+#
+# In the first shape the 3-digit field before the temperature is ground speed: three consecutive
+# reports from one aircraft ten minutes apart were 141 km apart, 457 kt, against fields of 390-409,
+# and a documented example with +26°C reads 23. The field after the longitude (245) and the two
+# digits before the speed (48) are unidentified and not shown.
+#
+#   FST01KPHXEGLLN391833W1022224390 510 107 M51C074061058058567  13220530
+#
+# British Airways' long-haul reports: route, position to four decimals (0.5 km from ADS-B), flight
+# level, two fuel figures in hundreds (on board, then used - 510/107 leaving Phoenix for London and
+# 129/577 arriving at Denver from London), temperature, wind, heading, track and ground speed (567
+# against 567 from ADS-B), then ETA and the time sent.
+
+def translate_label15(msg):
+    text = msg["text"].strip()
+    m = re.match(r"\(2([NS])(\d{2})(\d{3})([EW]) ?(\d{2,3})(\d{3})(.{3}) (..)(.{3})(.{3})\(Z", text)
+    if m:
+        lat = (int(m[2]) + int(m[3]) / 1000) * (-1 if m[1] == "S" else 1)
+        lon = (int(m[5]) + int(m[6]) / 1000) * (-1 if m[4] == "W" else 1)
+        speed, temp = m[9].strip(), m[10].replace(" ", "")
+        summary = f"Position report at {latlon(lat, lon)}" + \
+                  ((f", {int(speed)} kt" if int(speed) else ", stationary") if speed.isdigit() else "")
+        details = [f"Outside air {int(temp)}°C" if re.fullmatch(r"[-+]?\d+", temp) else None]
+        return result("position", summary, details, position={"lat": lat, "lon": lon, "src": "Label 15"})
+    m = re.match(r"\(2([NS])(\d{2})(\d{3})([EW]) ?(\d{2,3})(\d{3})(OFF|ON|IN|OUT)(\d{6})(\d{4})", text)
+    if m:
+        lat = (int(m[2]) + int(m[3]) / 1000) * (-1 if m[1] == "S" else 1)
+        lon = (int(m[5]) + int(m[6]) / 1000) * (-1 if m[4] == "W" else 1)
+        event = {"OFF": "Took off", "ON": "Landed", "IN": "Arrived at the gate", "OUT": "Left the gate"}[m[7]]
+        return result("flight", f"{event} at {hhmmss(m[9])}", [latlon(lat, lon)], position={"lat": lat, "lon": lon, "src": "Label 15"})
+    m = re.match(r"FST01(" + ICAO_AP + ")(" + ICAO_AP + r")([NS])(\d{2})(\d{4})([EW])(\d{3})(\d{4})(\d{3}) *(\d+) +(\d+) *(M| )? ?(\d+)C(.*)", text)
+    if m:
+        orig, dest = m[1], m[2]
+        lat = (int(m[4]) + int(m[5]) / 10000) * (-1 if m[3] == "S" else 1)
+        lon = (int(m[7]) + int(m[8]) / 10000) * (-1 if m[6] == "W" else 1)
+        level, fob, used, temp, tail = int(m[9]), int(m[10]), int(m[11]), int(m[13]) * (-1 if m[12] == "M" else 1), m[14]
+        t = re.match(r"(\d{3})(\d{3})(\d{3})(\d{3})(\d{3})\s+(\d{4})(\d{4})$", tail.strip()) or \
+            re.match(r"\d\d(\d{3})(\d{3})(\d{3})()(\d{3})\d{5}(\d{4})(\d{4})$", tail.strip())
+        details = [f"Flight {orig} → {dest}", latlon(lat, lon), f"Outside air {temp}°C",
+                   f"Fuel on board {fob * 100:,}, used {used * 100:,} (units as sent)"]
+        summary = f"Position report, FL{level}"
+        if t:
+            wdir, wspd, hdg, _trk, gs, eta, sent = t.groups()
+            summary += f", {int(gs)} kt at {hhmmss(sent)}"
+            details += [f"Wind {wdir}° at {int(wspd)} kt, heading {hdg}°", f"ETA {dest} {hhmmss(eta)}"]
+        return result("position", summary, details, position={"lat": lat, "lon": lon, "src": "Label 15"})
+    return None
+
+
+# ------------------------------------------------- UPS *POS reports (label H1)
+#   *POS
+#   09300432N4031W10028390260067790M5120185
+#   MMDDHHMM, lat DDMM, lon DDDMM, flight level, wind direction, wind speed, Mach (thousandths),
+#   temperature (sign, tenths), fuel in hundreds of pounds.
+# Checked against ADS-B: Mach .790 at -51.2°C is 459 kt true, plus a 67 kt wind from 260° on a track
+# of 078° gives 526 kt over the ground, and ADS-B read 526.0. Fuel fell 800 lb per nine minutes on a
+# 757 in cruise, twice, which is that aircraft's burn.
+
+def translate_ups_pos(msg):
+    body = msg["text"].strip()
+    tail = r"(\d{3})(\d{3})(\d{3})(\d{3})([MP])(\d{3})(\d{4})(?:TOD([A-Z]{3})([A-Z]{3}) ?(\d{3,4}))?.*"
+    # Some aircraft give minutes to a tenth (N40571W105448); the body is fixed-width, so try that form first
+    m = re.fullmatch(r"\*POS\s+(\d\d)(\d\d)(\d\d)(\d\d)([NS])(\d\d)(\d\d\.?\d)([EW])(\d{3})(\d\d\.?\d)" + tail, body) or \
+        re.fullmatch(r"\*POS\s+(\d\d)(\d\d)(\d\d)(\d\d)([NS])(\d\d)(\d\d)([EW])(\d{3})(\d\d)" + tail, body, re.S)
+    if not m:
+        return None
+    minutes = lambda v: int(v) / (10 if len(v) == 3 else 1)
+    lat = (int(m[6]) + minutes(m[7]) / 60) * (-1 if m[5] == "S" else 1)
+    lon = (int(m[9]) + minutes(m[10]) / 60) * (-1 if m[8] == "W" else 1)
+    temp = int(m[16]) / 10 * (-1 if m[15] == "M" else 1)
+    return result("position", f"Position report at {m[3]}:{m[4]} UTC, FL{int(m[11])}, Mach {int(m[14]) / 1000:.3f}",
+                  [latlon(lat, lon), f"Outside air {temp:.1f}°C", f"Wind {m[12]}° at {int(m[13])} kt",
+                   f"Fuel {int(m[17]) * 100:,} lb",
+                   (f"Top of descent" + (f" at {hhmmss(m[20].zfill(4))}" if m[20] else "") + f", {m[18]} → {m[19]}") if m[18] else None],
+                  position={"lat": lat, "lon": lon, "src": "UPS position report"})
+
+
+# ------------------------------------------------- FedEx PO6 position reports (label H1)
+#   PO6N244FE2370 136KMEMKPDX300909533569 -192 -465 360170775281600141
+#   51CRS 37767 707724707725 26N 40452W10234521340 695     0
+# Tail, route, DDMM HHMM, then total and static air temperature in tenths, flight level and Mach
+# (thousandths); the second line has the flight phase and position in degrees and minutes (2 km
+# from ADS-B at the median). The three digits after the Mach looked like a heading but agree with
+# the ADS-B track only a third of the time, so they and the other numbers are not shown.
+
+def translate_fedex_pos(msg):
+    m = re.match(r"PO\d(N\w+FE).{4} .{3}(" + ICAO_AP + ")(" + ICAO_AP + r")(\d\d)(\d\d)(\d\d)(\d\d)[\d ]{4} *(-?\d+) +(-?\d+) (\d{3})\d{3}(\d{3})(\d{3})\d+\s+\d\d(CRS|CLMB|DESC|TKOF|SCR\d|CR(?= ))", msg["text"])
+    if not m:
+        return None
+    # Degrees then minutes in tenths, each right-aligned in three characters: "N 40452W105 49" is 40°45.2' 105°04.9'
+    pos = re.search(r"N([ \d]\d\d)([ \d]\d\d)W([ \d]\d\d)([ \d]\d\d)", msg["text"])
+    lat = lon = None
+    if pos:
+        lat = int(pos[1]) + int(pos[2]) / 600
+        lon = -(int(pos[3]) + int(pos[4]) / 600)
+    phase = {"CRS": "cruise", "CR": "cruise", "CLMB": "climb", "DESC": "descent", "TKOF": "takeoff"}.get(m[13], f"phase {m[13]}")
+    return result("position", f"Position report at {m[6]}:{m[7]} UTC, FL{int(m[10])}, Mach {int(m[11]) / 1000:.3f}, {phase}",
+                  [f"Flight {m[2]} → {m[3]}", latlon(lat, lon) if lat else None,
+                   f"Static air {int(m[9]) / 10:.1f}°C, total air {int(m[8]) / 10:.1f}°C"],
+                  position={"lat": lat, "lon": lon, "src": "FedEx position report"} if lat else None)
+
+
+# ------------------------------------------------- JetBlue / Air Canada T8 reports (label H1)
+#   R721V0201,180302,, N3149J,5318410-07,736205,736509,00012,KONT,KJFK,07:24:37,2026:09:30,JBU454 ,...
+#   ...,39.6328,39.6320,-102.0671,-102.0675,533.0,533.0,60.69,60.69,...
+# Report name, tail, route, time and date, then paired values; the first paired lat/lon/ground speed
+# match ADS-B exactly. The engine values that follow are not identified.
+
+def translate_t8_report(msg):
+    m = re.match(r"R(\d{3})V(\d{4}),\d+,, ?(\S+),.*?,(" + ICAO_AP + "),(" + ICAO_AP + r"),(\d\d:\d\d:\d\d),(\d{4}):(\d\d):(\d\d),", msg["text"])
+    if not m:
+        return None
+    pos = re.search(r",(-?\d{1,2}\.\d{4}),-?\d{1,2}\.\d{4},(-?\d{1,3}\.\d{4}),-?\d{1,3}\.\d{4},(\d{1,3}\.\d),\d{1,3}\.\d,", msg["text"])
+    details = [f"Flight {m[4]} → {m[5]}", f"Generated {m[6]} UTC"]
+    position = None
+    if pos:
+        lat, lon = float(pos[1]), float(pos[2])
+        details.append(f"At {latlon(lat, lon)}, {float(pos[3]):.0f} kt")
+        position = {"lat": lat, "lon": lon, "src": "T8 report"}
+    return result("data", f"Aircraft monitoring report R{m[1]}", details, position=position)
+
+
 # ----------------------------------------------------------------- dispatcher
 
 def translate(msg, raw=None):
@@ -1161,7 +1344,7 @@ def translate(msg, raw=None):
             return result("flight", "Flight management computer report" +
                           (f" ({code.group(1)})" if code else ""), generic=True)
 
-    if airline == "UA" and text.startswith("/") and re.match(r"/\w\w .{2,18}?\s*/", text):
+    if airline == "UA" and text.startswith("/") and re.match(r"/\w\w (?:[A-Z]{6}(?![A-Z])|.{2,18}?\s*/)", text):
         r = translate_united_slash(msg)
         if r:
             return r
@@ -1183,6 +1366,10 @@ def translate(msg, raw=None):
             return result("maintenance" if re.search(r"RESET|FAULT|FAIL|INOP|MEL", text) else "crew",
                           f"Message to airline operations: “{reflow(lines)}”")
 
+    if label == "15":
+        r = translate_label15(msg)
+        if r:
+            return r
     if label == "16" or "/AUTPOS/" in text:
         report = translate_autpos(msg)
         if report:
@@ -1272,6 +1459,10 @@ def translate(msg, raw=None):
         return result("position", "Position and progress report" + (f", destination {m.group(1)} ETA {hhmmss(m.group(2))}" if m else ""),
                       [pos_detail(msg)])
 
+    for parser in (translate_ups_pos, translate_fedex_pos, translate_t8_report):
+        r = parser(msg)
+        if r:
+            return r
     wx = translate_weather(msg)
     if wx:
         return wx
