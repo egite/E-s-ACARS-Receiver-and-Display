@@ -611,7 +611,7 @@ def translate_weather(msg):
 # unambiguous are read: report identity, route, flight phase, generation time, and trip-report samples.
 
 PHASE_CODES = {"TKO": "takeoff", "TKOF": "takeoff", "TO": "takeoff", "CLB": "climb", "CLMB": "climb", "CL": "climb",
-               "CRZ": "cruise", "CR": "cruise", "DES": "descent", "DESC": "descent", "DE": "descent", "DC": "descent",
+               "CRZ": "cruise", "CR": "cruise", "CRS": "cruise", "DES": "descent", "DESC": "descent", "DE": "descent", "DC": "descent",
                "APU": "APU", "LD": "landing", "AP": "approach", "ER": "en route", "IC": "initial climb"}
 
 
@@ -717,14 +717,46 @@ def translate_hydn(text):
     return result("data", f"Hydraulic monitoring report ({plural(len(rows), 'sample')}), {span}", details)
 
 
+# United's PNM4 performance report: header with tail, route and phase (CRS for cruise),
+# then samples five seconds apart, laid out like
+#
+#   28989 28988    85    854335++++++ 71 -31.5  -5.810.728    93    9329---00001100
+#
+# two altitudes, N1 for each engine, unknowns, static and total air temperature, a 1, Mach,
+# then fields that run together once N2 reaches 100 and are not read. Over 25,713 samples
+# total temperature equals static x (1 + 0.2 Mach^2) to within 0.2 C (5th-95th percentile),
+# static temperature tracks altitude at r=-0.987, and the two altitudes agree to 20 ft at
+# the median. N1 runs 32-98% between the 5th and 95th percentile, idle to climb power.
+PNM4_ROW = re.compile(r"(\d{5}) (\d{5}) +(\d+) +(\d+?)\d{4}[+\d-]{6} *\d+ +(-?\d+\.\d) +(-?\d+\.\d)1(0\.\d{3}) ")
+
+
+def translate_pnm4(text):
+    text = re.sub(r"#DFB|[\r\n]", "", text)
+    if not text.startswith("PNM4"):
+        return None
+    route = re.search(r"(" + ICAO_AP + ")(" + ICAO_AP + r")(CRS|CLMB|DESC|CLB|CRZ|DES|TKO)?", text[8:60])
+    rows = PNM4_ROW.findall(text)
+    details = [f"Flight {route[1]} \u2192 {route[2]}" if route else None]
+    name = "Performance monitoring (PNM) report" + (f", {PHASE_CODES[route[3]]}" if route and route[3] else "")
+    if not rows:
+        return result("data", name, details)
+    first, last = rows[0], rows[-1]
+    span = f"{int(first[0]):,} ft" + ("" if first[0] == last[0] else f" \u2192 {int(last[0]):,} ft")
+    details += [f"Mach {float(first[6]):.3f}",
+                f"Outside air {float(first[4]):.1f}\u00b0C (total {float(first[5]):.1f}\u00b0C)",
+                f"N1 {int(first[2])}/{int(first[3])}%"]
+    return result("data", f"{name} ({plural(len(rows), 'sample')}), {span}", details)
+
+
 def translate_monitoring(msg):
     text = msg["text"]
     tagged = translate_tagged_weather(text)
     if tagged:
         return tagged
-    hydn = translate_hydn(text)
-    if hydn:
-        return hydn
+    for reader in (translate_hydn, translate_pnm4):
+        report = reader(text)
+        if report:
+            return report
     trip = translate_trip_report(text)
     if trip:
         return trip
@@ -776,8 +808,11 @@ def translate_monitoring(msg):
                        ("PNM", "Performance monitoring (PNM) report"),
                        ("HYDN", "Aircraft monitoring report (HYDN)"),
                        ("CAB", "Aircraft monitoring report (CAB)")):
-        if re.match(rf"\s*(?:\w{{4}}\s+)?{code}\b|\s*{code}\d", text):
-            return result("data", name + (f", {phase_name}" if phase_name else ""), [route_detail])
+        if re.match(rf"(?:#DFB)?\s*(?:\w{{4}}\s+)?{code}\b|(?:#DFB)?\s*{code}[\dN]", text):
+            # No header fields here, so a phase word (CLMB) can pass for a Canadian airport
+            # code: name the route only when both ends are airports.
+            known = route and all(airports.city(c) for c in route)
+            return result("data", name + (f", {phase_name}" if phase_name else ""), [route_detail if known else None])
     return None
 
 

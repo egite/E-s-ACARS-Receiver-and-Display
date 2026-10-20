@@ -37,3 +37,20 @@ def test_hydraulic_report_fields_run_together():
                    "  299920.734144200 72132 78.0 91.330683068   0.000   0.000///AIRFALSE"}
     r = translate.translate(msg)
     assert r["summary"] == "Hydraulic monitoring report (1 sample), 29,992 ft"
+
+
+def test_performance_report_pnm4():
+    msg = {"label": "H1", "flight": "UA1767", "kind": "acars",
+           "text": "#DFBPNM4G941N77261093013343349128017670KRAPKDENCRS 874670875908LBTL2411-00001100 28989 28988"
+                   "    85    854335++++++ 71 -31.5  -5.810.728    93    9329---00001100 28985 28982    85    854436"
+                   "++++++ 71 -31.5  -5.810.732    93    9334---00001100"}
+    r = translate.translate(msg)
+    assert r["summary"] == "Performance monitoring (PNM) report, cruise (2 samples), 28,989 ft → 28,985 ft"
+    assert r["details"][0] == "Flight KRAP Rapid City → KDEN Denver"
+    assert "Outside air -31.5°C (total -5.8°C)" in r["details"]
+
+
+def test_phase_word_is_not_an_airport():
+    msg = {"label": "H1", "flight": "UA0000", "kind": "acars",
+           "text": "CAB3WB09N76517091415454022 88319150KDENCLMB7000CLMB-------///////5\r\n411-4340001100  5332  "}
+    assert not any("CLMB" in (d or "") for d in translate.translate(msg)["details"])

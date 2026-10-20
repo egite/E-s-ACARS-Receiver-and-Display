@@ -29,6 +29,7 @@ tail of rare labels.
 | JetBlue/Air Canada H1/T8 `R721V` | report name, route, time, position and ground speed (exact against ADS-B); engine values unread |
 | United 5Z short forms (`/B6 DENDSM DSM R13`) | decoded (20 October) |
 | United `HYDN` (H1, 737 hydraulic report) | decoded (20 October): altitude, Mach, static and total temperature, N1/N2 both engines, hydraulic pressures, weight. No ADS-B pairs (plain ACARS, no ICAO address), so checked physically: total temperature = static x (1 + 0.2 M^2) to 0.2 C over 26,286 samples |
+| United `PNM4` (H1, performance report) | decoded (20 October): altitude, Mach, static and total temperature, N1; same temperature check holds over 25,713 samples. `PNMN`, `APM` and `CAB` are now at least named with route and phase on reassembled messages, which start `#DFB` |
 | Delta/Northwest label 48 | connection requests (20 October): a flight number or city at the destination. 9 of 10 requested flights the receiver also heard leave the asker's destination, against 12% by chance |
 | label MA | **closed**. 6.41 bits/char against a 6.44 ceiling over the 442 messages held at the time of the test (the archive now has 1,474, all with text): encrypted or compressed, no structure to attack |
 
