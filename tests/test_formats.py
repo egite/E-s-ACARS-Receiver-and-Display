@@ -75,7 +75,8 @@ def test_flight_computer_messages_with_inline_sublabel():
     def read(text):
         return translate.translate({"label": "H1", "flight": "UA0001", "kind": "acars", "text": text})
     ack = read("#M1B/HDQDLUA.RESPWI/AK,071/GAHDQDLUA/TS124749,3009261EFA")
-    assert ack["summary"] == "Flight computer accepted the predicted winds sent from the ground"
+    # AK is an acknowledgement (received), not AC (accepted): ARINC 702A.
+    assert ack["summary"] == "Flight computer acknowledged the predicted winds sent from the ground"
     pos = read("#M1B/.POS/TS065719,300926N41040W105051,,065719,410,CYS,065819,BFF,M56,24063,367,850F974")
     assert pos["summary"] == "Position report: over 41.07°N 105.08°W at 06:57:19 UTC, FL410"
     assert "Wind 240° at 63 kt" in pos["details"]
@@ -142,3 +143,22 @@ def test_report_239_snapshot():
     airbus = read("A321,059330,1,1,TB000000/REP239,00,00,4/239N113DX0453093026043217775N38764W105 15340-14-43209 64AF0501")
     assert airbus["position"]["lat"] == 38.764 and airbus["position"]["lon"] == -105.015
     assert "FL340" in airbus["details"]
+
+
+def test_flight_computer_replies_per_arinc_702a():
+    def read(text):
+        return translate.translate({"label": "H1", "flight": "UA0001", "kind": "acars", "text": text})
+    accepted = read("/HDQDLUA.RESPWI/AC,085/GAHDQDLUA/TS124812,300926055B")
+    assert accepted["summary"] == "Flight computer accepted the predicted winds sent from the ground"
+    assert accepted["details"] == ["Company wind data accepted"]
+    rejected = read("#M1B/HDQDLUA.REJPWI,124749,053,,CB007,CRUISE/GAHDQDLUA/TS124751,300926B9FA")
+    assert rejected["details"] == ["Reason: not allowed in this flight phase"]
+    request = read("/HDQDLUA.REQPWI/WQ390.340.300.240:CHUWY.ONL.FOD/DQ290/WRKORD.KSTL/GAHDQDLUA/TS173221,300926469B")
+    assert request["details"][:3] == ["Winds at FL390, FL340, FL300, FL240", "Along 3 waypoints: CHUWY ONL FOD",
+                                      "Descent forecast from FL290"]
+
+
+def test_position_report_fuel_remaining():
+    r = translate.translate({"label": "H1", "flight": "UA0001", "kind": "acars",
+                             "text": "POSN38317W103402,LAYLA,054019,388,KD60A,060202,OVR,M50,226075,2112834"})
+    assert r["details"][-1] == "Fuel remaining 21,100 lb"

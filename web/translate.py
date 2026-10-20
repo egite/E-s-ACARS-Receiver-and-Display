@@ -364,6 +364,50 @@ FMC_CODES = {
 }
 
 
+# Replies and requests between the flight computer and the airline, as ARINC 702A lays them
+# out. A reply is RES (response) or REJ (rejection) followed by the IMI of the uplink it
+# answers. A response carries AK (acknowledged: received) or AC (accepted: loaded) and a
+# stimulus code; a rejection carries the time and an error type code. Only codes defined in
+# the specification that occur in this receiver's traffic are named; the others (RESREQ's
+# 470, RESPWI's 478 and 716 among them) are implementation-specific and shown as numbers.
+FMC_UPLINKS = {"PWI": "predicted winds", "PWM": "wind update", "FPN": "flight plan", "POS": "position request",
+               "PER": "performance data", "PRG": "progress request", "INR": "initialization data",
+               "REQ": "request", "TWX": "text message", "MSG": "message", "LDI": "load data"}
+FMC_STIMULUS = {"071": "company uplink acknowledged", "073": "company route data accepted",
+                "085": "company wind data accepted", "091": "descent forecast accepted",
+                "115": "uplink asking for a downlink", "301": "multi-level wind data accepted"}
+FMC_REJECTION = {"003": "syntax error", "023": "unsolicited uplink", "027": "not allowed in descent",
+                 "053": "not allowed in this flight phase", "101": "buffer full",
+                 "109": "invalid format or range", "130": "no matching fix in the route",
+                 "203": "not allowed without a valid position"}
+
+
+def translate_fmc_exchange(body):
+    m = re.match(r"(RES|REJ)([A-Z]{3})(?:/(AK|AC|RJ),(\d{2,3})|,\d{6},(\d{3}))?(?=[/,]|[0-9A-F]{4}$|$)", body)
+    if m and (m[3] or m[5] or m[2] in FMC_UPLINKS):
+        what = FMC_UPLINKS.get(m[2], f"{m[2]} uplink")
+        if m[1] == "REJ" or m[3] == "RJ":
+            reason = FMC_REJECTION.get(m[5] or "")
+            code = m[5] or m[4]
+            return result("flight", f"Flight computer rejected the {what} sent from the ground",
+                          [f"Reason: {reason}" if reason else f"Error code {code}" if code else None])
+        verb = "accepted" if m[3] == "AC" or not m[3] else "acknowledged"
+        # Two-digit codes may be the hexadecimal form the specification also allows; not guessed at.
+        meaning = FMC_STIMULUS.get(m[4]) if m[4] and len(m[4]) == 3 else None
+        return result("flight", f"Flight computer {verb} the {what} sent from the ground",
+                      [meaning[0].upper() + meaning[1:] if meaning else f"Code {m[4]}" if m[4] else None])
+    m = re.match(r"REQPWI/", body)
+    if m:
+        fields = dict((f[:2], f[2:]) for f in body.split("/")[1:] if len(f) > 2)
+        levels, _, points = fields.get("WQ", "").partition(":")
+        details = [f"Winds at FL{', FL'.join(levels.split('.'))}" if levels else None,
+                   f"Along {plural(len(points.split('.')), 'waypoint')}: {points.replace('.', ' ')}" if points else None,
+                   f"Descent forecast from FL{fields['DQ']}" if re.fullmatch(r"\d{3}", fields.get("DQ", "")) else None,
+                   f"Weather for {fields['WR'].replace('.', ', ')}" if fields.get("WR") else None]
+        return result("flight", "Crew requested predicted winds for the route", details)
+    return None
+
+
 def translate_posn(body):
     """ARINC 702 flight-computer position report: POSNlatlon,wpt,time,FL,next,eta,nextnext,temp,wind,..."""
     m = re.search(r"POSN([NS]?)(\d{2})(\d{2})(\d)([EW])(\d{3})(\d{2})(\d),([^,]*),(\d{6}),(\d{2,3}),([^,]*),(\d{6})?,([^,]*),([MP]\d{1,2}),(\d{4,6})", body)
@@ -380,6 +424,13 @@ def translate_posn(body):
     summary = f"Position report: over {wpt or latlon(lat, lon)} at {hhmmss(t_over)}, {fl(level)}"
     details = [latlon(lat, lon), (f"Next waypoint {nxt}" + (f" at {hhmmss(eta)}" if eta else "") + (f", then {then}" if then else "")) if nxt else None,
                f"Outside air {temp_c}°C", f"Wind {wdir}° at {wspd} kt"]
+    # ARINC 702A puts fuel remaining after the wind, in the airline's units. Here they are
+    # hundreds of pounds: over 5,342 consecutive pairs of reports from one flight the value
+    # falls at 55-61 an hour for every narrowbody fleet (5,500-6,100 lb/h, an A320's or a
+    # 737's burn), twice that for the Hawaiian and FedEx widebodies, and rises in two.
+    fuel = re.match(r",(\d{2,4})(?=[0-9A-F]{4}$|[,/])", body[m.end():].strip())
+    if fuel:
+        details.append(f"Fuel remaining {int(fuel[1]) * 100:,} lb")
     route = re.search(r"/RI:DA:(" + ICAO_AP + r"):AA:(" + ICAO_AP + r")", body)
     if route:
         details.insert(0, f"Flight {route.group(1)} → {route.group(2)}")
@@ -1748,16 +1799,12 @@ def translate(msg, raw=None):
         if posn:
             return posn
         body = re.sub(r"^/?[A-Z0-9]{7}\.", "", text)
+        fmc = translate_fmc_exchange(body)
+        if fmc:
+            return fmc
         code = re.match(r"([A-Z]{3,6})[/,]", body)
         if code and code.group(1) in FMC_CODES:
             return result("flight", FMC_CODES[code.group(1)])
-        # RESxxx / REJxxx: flight computer accepted / rejected a ground uplink of type xxx
-        reply = re.match(r"(RES|REJ)(PWI|FPN|POS|PER|PRG|INR)$", code.group(1)) if code else None
-        if reply:
-            what = {"PWI": "predicted winds", "FPN": "flight plan", "POS": "position request",
-                    "PER": "performance data", "PRG": "progress request", "INR": "initialization data"}[reply.group(2)]
-            verb = "accepted" if reply.group(1) == "RES" else "rejected"
-            return result("flight", f"Flight computer {verb} the {what} sent from the ground")
         a702 = translate_arinc702(text)
         if a702:
             return a702

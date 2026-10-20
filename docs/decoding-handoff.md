@@ -154,7 +154,12 @@ filled from someone else's capture. And they recovered their remaining character
 known plaintext. That crib is unavailable here: all 1,554 ciphered messages this receiver
 has are downlinks, and VHF cannot hear SATCOM.
 
-ARINC 622-4 (in the project folder, gitignored - ARINC sells these) specifies the
+ARINC 702A-3 (also in the project folder, gitignored) defines the flight-computer messages: it
+confirmed `WQ`/`DQ`/`WR` in wind requests, gave fuel remaining after the wind in POSN
+reports (hundreds of pounds here, by burn rate), and showed that `RES.../AK` is an
+acknowledgement where only `AC` is acceptance - the translator had called both accepted.
+Only codes the spec defines and this traffic uses are named in the code; the tables are not
+copied in. ARINC 622-4 (in the project folder, gitignored - ARINC sells these) specifies the
 bit-oriented ATS format libacars already reads: a three-character IMI, a seven-character
 dot-padded registration, hex application data, CRC. Character-oriented ATS is ARINC 623,
 which we do not have. Our label 44 has no slash after its identifier so it is neither, which
