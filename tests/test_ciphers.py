@@ -75,3 +75,34 @@ def test_southwest_positions_carry_routes(corpus):
 def test_corpus_translates(corpus):
     for m in corpus:
         translate.translate(dict(m, english=None))
+
+
+def test_bizjet_punctuation_is_free_of_the_other_tables():
+    for group, (cipher, plain) in translate.BIZJET_PUNCT.items():
+        sep, digits = translate.BIZJET_KEYS[group]
+        assert set(plain) <= set(" .-") and len(set(cipher)) == len(cipher), group
+        assert not set(cipher) & (set(digits) | {sep} | set(translate.BIZJET_LETTERS[group][0])), group
+
+
+def test_bizjet_poa_position_report():
+    # ZD0321, 3 October 17:26 UTC; ADS-B had it at 39.11, -102.30, 43,012 ft.
+    msg = {"label": "17", "flight": "ZD0321", "kind": "acars",
+           "text": "02N;|,3<t,0-3&,0,03]-9oXvsolrp&r0)$,9TQ&/3,-$3AT0&-])&$Q9&m0,&7$Q)&|4e;1N&3,"}
+    r = translate.translate(msg)
+    assert r["summary"] == "Position report at 17:26 UTC, FL430"
+    assert r["details"] == ["Flight KELM Elmira/Corning → KVNY Van Nuys", "39.11°N 102.31°W",
+                            "Wind 279° at 56 kt", "Outside air -59°C"]
+
+
+def test_bizjet_space_is_not_q():
+    # Group 03 once had Q where the space is.
+    msg = {"label": "41", "flight": "ZD998N", "kind": "acars",
+           "text": "038>ox(qLJVDxPftx-DJxq--Jq.SL)q.88Xq((t9q2TqLVV9LIq2TqT0fL+m!wH+W>XOT+>q&0S+dWd0H.wfw)"}
+    assert "TOWNEPLACE SUITES DOVER ROCKAWAY" in str(translate.translate(msg)["details"])
+
+
+def test_bizjet_software_report():
+    msg = {"label": "48", "flight": "XA0424", "kind": "acars",
+           "text": "08u,qLeZq}tve`~YLvLvYZLKKZz0 WZzufRZWx\\*eaLL*Y}LvLKZWx\\*:mq*fy|*LetZatLL}e}a*vLeBBBZ,Ryv*jjjjj"}
+    r = translate.translate(msg)
+    assert r["summary"] == "Avionics software report, KBJC Denver → KSHV Shreveport"

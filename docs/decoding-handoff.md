@@ -19,7 +19,8 @@ tail of rare labels.
 | CPDLC and ADS-C (label BA, H1/M1) | **libacars**, already linked. AT1, DR1 and CC1 all decode |
 | Delta/Northwest label 17 | waypoint progress reports, decoded |
 | Southwest label 37 | positions, altitude, Mach, airspeed, track, wind, temperature, fuel, weight, and (20 October) origin and destination |
-| Business aviation labels 41/42/44 | fully read, cipher broken: position, altitude, times, fuel, origin, destination, plus OFF/ETA/TWX/MSG events |
+| Business aviation labels 41/42/44 | fully read, cipher broken: position, altitude, times, fuel, origin, destination, plus OUT/OFF/ETA/TWX/MSG events |
+| Business aviation on labels 17/42/48 (20 October) | the same cipher off label 44: POA position reports on 17 (position 0.35 km from ADS-B, wind turns 413-523 kt ground speeds into 462-473 kt true airspeed), SPN avionics software reports and TST on 48, TWX on 42. Space, point and minus added as `BIZJET_PUNCT`; groups 03 and 05 had Q where the space is |
 | FedEx label 16 AUTPOS | decoded |
 | Label 15 position reports | decoded (20 October): general-aviation `(2N…` reports in decimal degrees with ground speed and temperature; British Airways `FST01` with route, FL, fuel, wind, heading, ground speed (within 2 kt of ADS-B) |
 | UPS `*POS` (H1) | decoded (20 October): position, FL, wind, Mach, temperature, fuel. Mach, temperature and wind reproduce the ADS-B ground speed through the wind triangle; fuel falls at a 757's burn |
@@ -166,9 +167,10 @@ GitHub (label 15 layout, 5Z command codes) and the acarsonline.pbworks.com label
 1. ~~Southwest label 37 origin and destination.~~ Solved 20 October, not by attack: see
    the pitfall on known plaintext above. `SOUTHWEST_LETTERS` in `web/translate.py` says how
    it was checked.
-2. **The 15 business-aviation messages still unread**, mostly missing one rare key
-   character. The paper's 98.44% suggests the rest is reachable; a wider collection range
-   or a shared capture would do it.
+2. **Business aviation**: after the 20 October sweep, what is left unread in this cipher is a
+   handful of free-text MSG reports with rare characters, and one POA whose minus sign is
+   unseen in its group. The field separator inside POA reports (shown `?`) is unidentified.
+   A wider collection range or a shared capture would fill the rest.
 3. **Rare labels.** Swept 20 October. Label 48 (Delta/Northwest) is a connection request and
    now reads. The unread label 42 messages are all business-aviation ciphertext (item 2), as
    are label 48's XA/ZD ones. Label 4S is Air Canada `DFR AC1073/30`, a flight number and

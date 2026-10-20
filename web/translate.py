@@ -810,7 +810,7 @@ def translate_label44(msg):
     parts = [p.strip() for p in msg["text"].split(",")]
     # TWX and MSG turned up once the ciphered half of this traffic became readable: a TWX
     # carries a route and little else, a MSG is free text to or from dispatch.
-    m = re.match(r"0*(ETA|POS|OFF|ON|IN|TWX|MSG)0\d$", parts[0]) if parts else None
+    m = re.match(r"0*(ETA|POS|OUT|OFF|ON|IN|TWX|MSG|TST|SPN)0\d$", parts[0]) if parts else None
     if not m or len(parts) < 5:
         return None
     event = m.group(1)
@@ -827,6 +827,13 @@ def translate_label44(msg):
         return result("flight" if event == "ETA" else "position", summary,
                       [level, f"ETA {hhmmss(eta)}" if eta else None,
                        f"Fuel on board {float(fuel) * 1000:,.0f} lb" if fuel else None, pos])
+    if event in ("SPN", "TST"):
+        # SPN carries part numbers (CMF-2600-130507) after the route: the avionics software
+        # loaded, sent once after takeoff. TST is a test message with a route and nothing else.
+        level = feet(int(parts[2]) * 100) if parts[2].isdigit() else None
+        route = f", {parts[3]} \u2192 {parts[4]}" if all(re.fullmatch(ICAO_AP, p) for p in parts[3:5]) else ""
+        return result("data" if event == "SPN" else "flight",
+                      ("Avionics software report" if event == "SPN" else "Test message") + route, [level, pos])
     if event in ("TWX", "MSG"):
         route = [p for p in parts[3:5] if re.fullmatch(ICAO_AP, p)]
         words = [p for p in parts[5:] if re.search(r"[A-Z]{3,}", p) and not re.fullmatch(r"[\d.]+", p)]
@@ -834,9 +841,9 @@ def translate_label44(msg):
                       ("Message to dispatch" if event == "MSG" else "Text message")
                       + (f", {route[0]} \u2192 {route[1]}" if len(route) == 2 else ""),
                       [f"\u201c{reflow(words)}\u201d" if words else None, pos])
-    names = {"OFF": "Took off", "ON": "Landed", "IN": "Arrived at the gate"}
+    names = {"OUT": "Left the gate", "OFF": "Took off", "ON": "Landed", "IN": "Arrived at the gate"}
     time = next((p for p in parts[5:] if re.fullmatch(r"\d{4}", p)), None)
-    where = "" if any("?" in p for p in parts[2:4]) else f": {parts[2]} \u2192 {parts[3]}"
+    where = "" if any("?" in p or "*" in p for p in parts[2:4]) else f": {parts[2]} \u2192 {parts[3]}"
     return result("flight", f"{names[event]}{where}" + (f" at {hhmmss(time)}" if time else ""), [pos])
 
 
@@ -857,18 +864,46 @@ def bizjet_other(msg, group, sep, digits):
     ADS-B to 0.43 km at the median; the letter fit only ever had a spare Z to place.
     """
     table = {c: str(i) for i, c in enumerate(digits)}
-    letters = BIZJET_LETTERS.get(group)
-    if letters:
-        table = {**dict(zip(*letters)), **table}
+    for extra in (BIZJET_LETTERS.get(group), BIZJET_PUNCT.get(group)):
+        if extra:
+            table = {**dict(zip(*extra)), **table}
     plain = "".join(table.get(c, "," if c == sep else "?") for c in msg["text"][2:])
     head = re.match(r"([A-Z]{3}\d\d)(.*)", plain)
     if not head:
         return None
+    if head.group(1) == "POA01":
+        return bizjet_poa(msg, plain)
     # An ETA runs its event straight into the position where the others put a comma.
     # Normalise it so the clear-text parser only ever sees one shape.
     if head.group(2)[:1] not in ("", ","):
         plain = f"{head.group(1)},{head.group(2)}"
     return translate_label44(dict(msg, text=plain))
+
+
+# POA, the automatic position report ("AUTORP"), sent on label 17 rather than 44 and laid
+# out by column rather than by comma; the character between its fields is unknown (shown ?):
+#
+#   POA01?ZD0321?03031726KELMKVNY?N39 06.5?W102 18.3?279? 56?430?- 59?AUTORP?10
+#
+# Flight ID, day twice, time, origin and destination run together, position in degrees and
+# decimal minutes, wind direction and speed, flight level, temperature. Checked on the 15
+# in the archive with an ADS-B fix: positions sit a median of 0.35 km from it (worst 1.05),
+# the flight level matches it, and the wind is right - through the wind triangle it turns
+# ground speeds spread over 413-523 kt into true airspeeds of 462-473 kt at cruise, Mach
+# 0.81-0.83 at the reported temperature, which runs from -13 at FL196 to -61 at FL450.
+
+def bizjet_poa(msg, plain):
+    m = re.match(r"POA01.(\S{4,6}).\d\d(\d\d)(\d{4})([A-Z?]{4})([A-Z?]{4}).([NS])(\d\d) (\d\d\.\d).([EW])(\d{3}) (\d\d\.\d)"
+                 r".(\d{3}). *(\d+).(\d{3}).([-+?]) *(\d+).AUTORP", plain)
+    if not m:
+        return None
+    lat = (int(m[7]) + float(m[8]) / 60) * (-1 if m[6] == "S" else 1)
+    lon = (int(m[10]) + float(m[11]) / 60) * (-1 if m[9] == "W" else 1)
+    route = None if "?" in m[4] + m[5] else f"Flight {m[4]} \u2192 {m[5]}"
+    temp = f"Outside air {'' if m[15] == '+' else '-'}{int(m[16])}\u00b0C" if m[15] in "+-" else None
+    return result("position", f"Position report at {hhmmss(m[3])}, FL{int(m[14])}",
+                  [route, latlon(lat, lon), f"Wind {int(m[12])}\u00b0 at {int(m[13])} kt", temp],
+                  position={"lat": lat, "lon": lon, "src": "Business-aviation POA report"})
 
 
 def translate_label80(msg):
@@ -1147,13 +1182,35 @@ BIZJET_SHAPE = (5, 13, 3, 4, 4, 4, 4, 4, 5)
 BIZJET_LETTERS = {
     '01': ('#$*124569@CDFGHIMT\\_`cdny', 'CQOPGSHEJMFVRITDUXLNYBKWA'),
     '02': ('*/14:;<ENOXY`ehiklopqrstv|', 'FWRUBOZSPGEJXTHQIVKYCNMDLA'),
-    '03': ('!&)+.0128>@HILOSTWXdfmovw', 'LDYEKOFJMSHCBNIVTQURWPGXA'),
+    '03': ('!&)+.0128>@HILOSTXdfmovw', 'LDYEKOFJMSHCBNIVTURWPGXA'),
     '04': ('%(-/7=@DGKLNZ^`iknpqrvwz', 'WEKABOCTSIXNHJVRMUPLDYGF'),
-    '05': ('"#$&\'/2346?FIJLOQSTX]^_gh}', 'FYVWZMHASKQCTPRODXIENJBUGL'),
+    '05': ('"#$&\'/2346FIJLOQSTX]^_gh}', 'FYVWZMHASKCTPRODXIENJBUGL'),
     '06': ('"13456<>?DEILMOS[_acdiosx', 'TDKRSMHQGWOJENXFVCLPYUBIA'),
     '07': (' $(*-3567?EOTXY\\]_lnrsxy{}', 'LARPMQCFXONUWSIJEYKZDVBTGH'),
     '08': (' ,07:=?JPRW\\dfijmqsuxyz|~', 'JPBDAEUYLVCFRHQXTNOSMGKIW'),
     '09': (' !%(+-.0;GHLOPQTW\\dejor|}', 'JRHKNLMDQETSCBXYFOUGAWIPV'),
+}
+
+
+# Space, point and minus, which the letter fit never placed. They come from the fixed
+# punctuation of two event types that only became readable with the full key: POA
+# position reports ("N39 06.5 W102 18.3", temperature "- 59") and SPN part-number reports
+# ("CMF-2600-130507,CMF-ATN-HGI-029,69003236-502   "), whose layout the one clear-text
+# copy on key 00 confirms ("69003082-502   "). The minus is the temperature sign at every
+# cruise report and a different character on the one report from 10,000 ft, where it reads
+# +6. The space settled an error: in groups 03 and 05 the letter fit had parked Q on it,
+# so free text read "TOWNEPLACEQSUITES". Neither of those Qs ever decoded a real airport.
+# Only characters seen at least twice in their role are listed.
+BIZJET_PUNCT = {
+    '01': ('0Os', ' .-'),
+    '02': ('$T7', ' .-'),
+    '03': ('W$,', ' .-'),
+    '04': (']#3', ' .-'),
+    '05': ('?7N', ' .-'),
+    '06': (';,', ' .'),
+    '07': ('%+i', ' .-'),
+    '08': ('*', '-'),
+    '09': ('g5', ' .'),
 }
 
 
@@ -1478,7 +1535,8 @@ def translate(msg, raw=None):
         if m:
             return result("position", f"Position report at {hhmmss(m.group(1))}, {feet(m.group(2))}",
                           [pos_detail(msg), f"Flight {m.group(3)} → {m.group(4)}"])
-    if label == "44":
+    bizjet = label == "44" or (airline in ("XA", "GS", "ZD", "OO") and label in ("17", "41", "42", "48", "88"))
+    if bizjet:
         r = translate_label44(msg)
         if r:
             return r
@@ -1553,7 +1611,7 @@ def translate(msg, raw=None):
         return result("crew", f"Crew / dispatch message: “{reflow(lines)}”",
                       [f"Flight {route[0]} → {route[1]}" if route else None])
 
-    if label == "44":
+    if bizjet:
         report = translate_bizjet(msg)
         if report:
             return report
