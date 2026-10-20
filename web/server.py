@@ -23,6 +23,7 @@ from aiohttp import web
 import airports
 import settings
 from airlines import IATA_TO_ICAO
+from aircraft_db import AircraftDB
 from blocks import BlockAssembler
 from monitor import GroundStations, HealthMonitor, WeatherStore, process_memory_mb, stats_summary
 from translate import MESSAGE_TYPES, message_type, observations, parse_squitter, translate
@@ -372,7 +373,7 @@ class Archive:
 # out made every one of those messages look undecoded on replay, and I spent a while calling
 # label BA the largest unsolved family on the strength of it. It decodes live, to WILCO.
 ARCHIVE_FIELDS = ("id", "ts", "source", "freq", "level", "noise", "errors", "icao", "reg", "flight",
-                  "direction", "gs", "label", "sublabel", "msgno", "text", "decoded", "kind", "type",
+                  "direction", "gs", "label", "sublabel", "msgno", "text", "decoded", "kind", "type", "icao_src",
                   "position")
 
 HOT_HOURS = 48  # messages stay as live dicts this long, then go to compact JSON
@@ -551,26 +552,30 @@ class VRS:
 # --------------------------------------------------------------- tracker
 
 class Tracker:
-    def __init__(self, cfg, vrs):
-        self.cfg, self.vrs = cfg, vrs
+    def __init__(self, cfg, vrs, aircraft_db=None):
+        self.cfg, self.vrs, self.aircraft_db = cfg, vrs, aircraft_db
         self.aircraft = {}
         self.reg_to_icao = {}
 
     def resolve_icao(self, msg):
+        """The message's ICAO address and where it came from: the radio, or a lookup."""
         if msg["icao"]:
-            return msg["icao"]
+            return msg["icao"], msg.get("icao_src")
         rk = reg_key(msg["reg"])
         if rk and rk in self.reg_to_icao:
-            return self.reg_to_icao[rk]
+            return self.reg_to_icao[rk], "registration"
         if rk and rk in self.vrs.by_reg:
-            return self.vrs.by_reg[rk]["Icao"]
+            return self.vrs.by_reg[rk]["Icao"], "registration"
+        found = self.aircraft_db.icao(rk) if rk and self.aircraft_db else None
+        if found:
+            return found, "aircraft database"
         call = flight_to_callsign(msg["flight"])
         if call and call in self.vrs.by_call:
-            return self.vrs.by_call[call]["Icao"]
-        return None
+            return self.vrs.by_call[call]["Icao"], "callsign"
+        return None, None
 
     def add(self, msg):
-        icao = self.resolve_icao(msg)
+        icao, _ = self.resolve_icao(msg)
         rk = reg_key(msg["reg"])
         if icao and rk:
             self.reg_to_icao[rk] = icao
@@ -718,7 +723,8 @@ class ACARSWeb:
         self._store_scans = {}  # name -> (valid until, value), see _whole_store
         self._store_scanning = {}  # name -> task running that pass right now, shared by waiting requests
         self.vrs = VRS(cfg)
-        self.tracker = Tracker(cfg, self.vrs)
+        self.aircraft_db = AircraftDB(HERE.parent / cfg.get("aircraft_db", "AircraftDatabase.sqb"))
+        self.tracker = Tracker(cfg, self.vrs, self.aircraft_db)
         self.clients = set()
         self.started = time.time()
         self.recent_ts = deque()  # (ts, source, kind) for rate stats
@@ -765,6 +771,12 @@ class ACARSWeb:
             home = self.cfg["home"]
             if haversine_km(latest["lat"], latest["lon"], home["lat"], home["lon"]) <= self.cfg["max_position_km"]:
                 msg["position"] = {"lat": latest["lat"], "lon": latest["lon"], "alt": latest["alt"], "src": "Weather report"}
+        if not msg["icao"]:
+            # Plain ACARS carries a registration but no ICAO address. Resolve it before the
+            # archive records the message, so the record gets the aircraft's ADS-B fix too.
+            msg["icao"], src = self.tracker.resolve_icao(msg)
+            if msg["icao"]:
+                msg["icao_src"] = src
         self.archive.note(msg, self.vrs.by_icao.get(msg["icao"]) if msg["icao"] else None)
         changed = self.blocks.observe(msg)
         key = self.tracker.add(msg)  # resolves the ICAO address before the message is stored
@@ -1005,6 +1017,8 @@ class ACARSWeb:
         log.info("keeping %s hours of messages in memory", self.cfg["history_hours"])
         if self.archive.enabled:
             log.info("archiving every message to %s, keeping %d days", self.archive.dir, self.archive.retention_days)
+        # About a second of work; off the event loop so the receivers aren't kept waiting.
+        await asyncio.to_thread(self.aircraft_db.load)
         app["tasks"] = [asyncio.create_task(self.vrs_loop()), asyncio.create_task(self.purge_loop()),
                         asyncio.create_task(self.health_loop())]
 

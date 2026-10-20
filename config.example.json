@@ -41,6 +41,7 @@
   "vrs_poll_secs": 5,
 
   "history_hours": 2,
+  "aircraft_db": "AircraftDatabase.sqb",
   "archive": {"enabled": true, "dir": "archive/messages", "retention_days": 7},
 
   "health": {

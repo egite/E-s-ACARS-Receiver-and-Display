@@ -108,6 +108,7 @@ rates and the librtlsdr preload are edited in the file.
 | `health.silence_minutes` | Alert when a receiver decodes nothing for this long (per receiver) |
 | `health.ppm_tolerance`, `health.auto_ppm` | Tuning-error warning threshold (ppm) and automatic correction on/off |
 | `max_position_km` | Ignore positions parsed from messages that are farther than this from `home` |
+| `aircraft_db` | Registration-to-ICAO database, relative to the project folder (default `AircraftDatabase.sqb`); see below |
 
 **Choosing a decoder.** `acarsdec` and `dumpvdl2` are the defaults and need no extra setup — `install.sh`
 builds them. [xng](https://github.com/airframesio/xng) is an alternative that covers *both* modes in one
@@ -260,6 +261,15 @@ message also keeps a small stats row (its time, source, type, frequency, level a
 so whole-store passes — the stats page, the Message types dialog — never parse the cold
 part: a pass over a week of traffic takes about a second, and its result is reused for at
 least 30 s and never asked for twice at once.
+
+`aircraft_db` points at a Virtual Radar Server style aircraft database (an `AircraftDetail`
+table of `Icao` and `Registration`). Plain ACARS gives a message's registration but not the
+aircraft's ICAO address, so without it those messages - a quarter of all traffic - can't be
+paired with ADS-B. The server copies the registrations into an indexed in-memory table at
+start-up (about a second and 30 MB) and looks each one up there. A message whose address
+was looked up rather than received carries `icao_src` saying how (`aircraft database`,
+`registration` from VRS, or `callsign`). The file isn't in the repository (147 MB is over
+GitHub's limit): put it in the project folder. Without it everything works as before.
 
 `archive` is the durable record, and it survives restarts. Both it and `history_hours` are
 on the Settings page, next to each other, because they are easy to mistake for one another:

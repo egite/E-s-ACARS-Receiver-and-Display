@@ -16,3 +16,7 @@ tools/decoder-trial/run/
 
 # ARINC specifications are sold by Aeronautical Radio, Inc. and are not ours to redistribute
 *.pdf
+
+# Registration-to-ICAO database (Virtual Radar Server format), shipped separately: 147 MB is
+# over GitHub's file limit
+AircraftDatabase.sqb
