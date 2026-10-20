@@ -79,3 +79,11 @@ def test_flight_computer_messages_with_inline_sublabel():
     pos = read("#M1B/.POS/TS065719,300926N41040W105051,,065719,410,CYS,065819,BFF,M56,24063,367,850F974")
     assert pos["summary"] == "Position report: over 41.07°N 105.08°W at 06:57:19 UTC, FL410"
     assert "Wind 240° at 63 kt" in pos["details"]
+
+
+def test_airbus_header_with_c1_tail():
+    msg = {"label": "H1", "flight": "UA2270", "kind": "acars",
+           "text": "#DFBA37/A32037,1,1/C1N487UA,SEP30,151936,KORF,KDEN,2270/C28100,I23014,06,010822,011215/"}
+    r = translate.translate(msg)
+    assert r["summary"] == "Aircraft monitoring report A37"
+    assert r["details"] == ["Flight KORF Norfolk → KDEN Denver", "Generated 15:19:36 UTC"]

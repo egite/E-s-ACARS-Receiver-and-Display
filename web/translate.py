@@ -838,7 +838,7 @@ def translate_monitoring(msg):
         orig, dest = route or (glued[-1] if glued else (None, None))
         return result("data", f"Aircraft monitoring report {int(m.group(1))}", [f"Flight {orig} → {dest}" if orig else None])
     # ACMS report with header A02/A32002,1,1/CC<tail>,SEP14,150905,KDTW,KDEN
-    m = re.match(r"(A\d\d)/A\d{5},\d,\d/CC\w+,[A-Z]{3}\d\d,(\d{6}),(" + ICAO_AP + "),(" + ICAO_AP + ")", text)
+    m = re.match(r"(A\d\d)/A\d{5},\d,\d/C(?:C|1N)\w+,[A-Z]{3}\d\d,(\d{6}),(" + ICAO_AP + "),(" + ICAO_AP + ")", text)
     if m:
         return result("data", f"Aircraft monitoring report {m.group(1)}",
                       [f"Flight {m.group(3)} → {m.group(4)}", f"Generated {hhmmss(m.group(2))}"])

@@ -188,4 +188,9 @@ patterns brings it lower still.
    day with nothing to check a meaning against. Label 88's one unread message is a
    clear key-00 business-aviation `AMI02` event the label 44 reader doesn't know. Label 15 `(1N…` (nine messages) has one field fewer than `(2N…`
    and is not read.
-4. **Label MA**: don't. It is closed on entropy.
+4. **American A39 `C1TRP` trip reports** (460): the `C2` field holds a position and FL that
+   look clean (altitude matches ADS-B to the foot) but the position is either ~5 km from
+   the aircraft or ~150 km behind it along its track, with the report time only seconds
+   old. It is a position recorded at some event the message doesn't name, so it is not
+   shown; find what triggers the sample before putting it on the map.
+5. **Label MA**: don't. It is closed on entropy.
