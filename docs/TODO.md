@@ -34,4 +34,8 @@ Either way the restart needs to work under systemd (`systemd/acars-web.service`)
 - Restart the receiver after pulling and confirm the page loads: commit `4f66e82` moved
   `BlockAssembler` from `server.py` into `web/blocks.py`, which could not be run here (no
   aiohttp on the analysis machine).
+- After installing `AircraftDatabase.sqb` in the project folder and restarting, check the log
+  says "aircraft database: N registrations", and that new archive lines from the ACARS
+  receiver carry `icao` with `icao_src` and, when ADS-B has the aircraft, `adsb` (commit
+  `3aa3e8e`; also untested against a running server).
 - Push the decoding commits to GitHub (`origin`) when ready; none have been pushed.
