@@ -35,6 +35,7 @@ tail of rare labels.
 | United `TKON`/`TKO` (H1, takeoff engine reports) | route and takeoff time only (20 October): the time is 0-10 min before receipt in 98% of 878. The engine data is not read |
 | Delta `FD` (H1/DF) | named (20 October): route, tail, phase, and each row's code with its time interval. The codes' meaning is unknown |
 | United `CRZN` (H1, cruise report) | decoded (20 October): position, altitude, Mach, static temperature, weight. Altitude 12 ft from ADS-B, position 10 km (the minute between report and fix) |
+| Report 239 (Airbus ACMS `REP239` and Delta's Boeing layout) | snapshot decoded (20 October): position, FL, total and static temperature, wind on 4,839 reports. Position 1.3 km (2.6 km in the two-decimal layout); the wind shrinks the cruise ground-speed spread from 38 to 7 kt; Mach from the two temperatures equals Mach from true airspeed to 0.000 |
 | Delta/Northwest label 48 | connection requests (20 October): a flight number or city at the destination. 9 of 10 requested flights the receiver also heard leave the asker's destination, against 12% by chance |
 | label MA | **closed**. 6.41 bits/char against a 6.44 ceiling over the 442 messages held at the time of the test (the archive now has 1,474, all with text): encrypted or compressed, no structure to attack |
 

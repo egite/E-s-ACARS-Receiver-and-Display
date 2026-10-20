@@ -130,3 +130,15 @@ def test_crzn_cruise_report():
     assert "Outside air -13.8°C" in r["details"]
     r = read("CRZN343PN1483PHX ORD 3009152527351907 -227-492 37002077115248027651SCR1U A30  38703 38428 ")
     assert r["summary"] == "Cruise performance report, 37,002 ft, Mach 0.771"
+
+
+def test_report_239_snapshot():
+    def read(text):
+        return translate.translate({"label": "H1", "flight": "DL1028", "kind": "acars", "text": text})
+    boeing = read("239N904DN1028 93026 72212778 4145-10292350-18-46228 61AA-528 23880 264 5040048 835100J8IH-KSLCKBWI")
+    assert boeing["position"] == {"lat": 41.45, "lon": -102.92, "src": "Report 239"}
+    assert boeing["details"][-4:] == ["41.45°N 102.92°W", "FL350", "Outside air -46°C (total -18°C)",
+                                      "Wind 228° at 61 kt"]
+    airbus = read("A321,059330,1,1,TB000000/REP239,00,00,4/239N113DX0453093026043217775N38764W105 15340-14-43209 64AF0501")
+    assert airbus["position"]["lat"] == 38.764 and airbus["position"]["lon"] == -105.015
+    assert "FL340" in airbus["details"]
