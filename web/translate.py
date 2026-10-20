@@ -672,11 +672,59 @@ def translate_tagged_weather(text):
                   [f"Reported {gmt.group(1)} UTC" if gmt else None])
 
 
+# United's 737 hydraulic report, HYDN: tail, date, route and flight, then up to twelve
+# samples a few seconds apart, ~70 characters each with no separators to rely on (two
+# fields run together once N1 reaches 100):
+#
+#   HYDN12221300926KPSPKDEN1010...  -8.0 39.78 39.84 76.69 76.72 -33.5  300310.731142800 56369
+#       73.0 83.830603036   0.000   0.000:::AIRFALSE
+#
+# Read as total air temperature, N1 and N2 for each engine, static air temperature,
+# altitude, Mach, gross weight, a sample counter, two hydraulic quantities, system A and B
+# pressure, two unknowns, and an air/ground flag. No ADS-B pairs with these - they come
+# over plain ACARS with no ICAO address, and hold a recorded window rather than the present
+# - so the checks are physical: over 26,286 airborne samples total temperature equals
+# static temperature x (1 + 0.2 Mach^2) to within 0.2 C (5th-95th percentile), static
+# temperature tracks altitude at r=-0.982, altitude changes under 3,300 ft/min between
+# samples at the 99th percentile, the 616 ground samples leaving Denver read 5,131 ft at the
+# median, and the pressures stay within 3,008-3,088. Weight is in pounds: 104,000-168,000,
+# a 737's range and twice its maximum in kilograms. The engine pairs agree to 0.07% at the
+# median and the pairs move together at r=0.983; the first idles near 30% and the second
+# near 73%, rising to about 96 and 99 at climb power, which is fan (N1) and core (N2) on a
+# CFM56.
+HYDN_HEAD = re.compile(r"HYDN(\d{4,5})(\d{6})(" + ICAO_AP + ")(" + ICAO_AP + r")(\d{4})")
+HYDN_ROW = re.compile(r"(-?\d+\.\d) *(\d+\.\d\d) *(\d+\.\d\d) *(\d+\.\d\d) *(\d+\.\d\d) *(-?\d+\.\d) *(-?\d+?)(0\.\d{3})"
+                      r"(\d{6}) *(\d+) *(\d+\.\d) *(\d+\.\d)(\d{4})(\d{4}) *(-?\d+\.\d{3}) *(-?\d+\.\d{3})...(AIR|GND)(?:TRUE|FALSE)")
+
+
+def translate_hydn(text):
+    text = re.sub(r"#DFB|[\r\n]", "", text)
+    head = HYDN_HEAD.match(text)
+    if not head:
+        return None
+    rows = HYDN_ROW.findall(text)
+    details = [f"Flight {head[3]} → {head[4]}", f"N{head[1]}"]
+    if not rows:
+        return result("data", "Hydraulic monitoring report", details)
+    first, last = rows[0], rows[-1]
+    alt = lambda r: "on the ground" if r[16] == "GND" else f"{int(r[6]):,} ft"
+    span = alt(first) if alt(first) == alt(last) else f"{alt(first)} → {alt(last)}"
+    details += [f"Mach {float(first[7]):.3f}" if first[16] == "AIR" else None,
+                f"Outside air {float(first[5]):.1f}°C (total {float(first[0]):.1f}°C)",
+                f"N1 {float(first[1]):.1f}/{float(first[2]):.1f}%, N2 {float(first[3]):.1f}/{float(first[4]):.1f}%",
+                f"Hydraulic pressure A {int(first[12]):,} psi, B {int(first[13]):,} psi",
+                f"Gross weight {int(first[8]):,} lb"]
+    return result("data", f"Hydraulic monitoring report ({plural(len(rows), 'sample')}), {span}", details)
+
+
 def translate_monitoring(msg):
     text = msg["text"]
     tagged = translate_tagged_weather(text)
     if tagged:
         return tagged
+    hydn = translate_hydn(text)
+    if hydn:
+        return hydn
     trip = translate_trip_report(text)
     if trip:
         return trip
