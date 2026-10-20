@@ -803,6 +803,31 @@ def translate_takeoff(text):
                    "Derated takeoff" if "DERATE" in text else None])
 
 
+# Delta's FD report: tail, date and time, flight (plus one digit), route and phase, then
+# rows of an eight-character code and two times:
+#
+#   FD0A8115N873DN30090901 850155328341KLASKMSPCRS / 2700 / 34350X11081614070985090113
+#
+# The flight matches the message's own in all 677 reports. In 2,054 rows the first time
+# precedes the second 96% of the time and the second is within 15 minutes of receipt in
+# 77%, so each row is a code active over an interval. What the codes mean is not known:
+# their leading digits (34, 20, 14, 16, 05) do not read as ATA chapters throughout.
+FD_HEAD = re.compile(r"FD\w{6}(N\w+?)\d{8}.{6,9}?\d{5}(" + ICAO_AP + ")(" + ICAO_AP + r")(CRS|CLMB|DESC)?")
+FD_ROW = re.compile(r"[\r\n](\d{4}[0-9A-Z]{4})(\d{6})\d{6}(\d{6})")
+
+
+def translate_fd(text):
+    head = FD_HEAD.match(text)
+    if not head:
+        return None
+    rows = FD_ROW.findall(text)
+    phase = {"CRS": "cruise", "CLMB": "climb", "DESC": "descent"}.get(head[4] or "")
+    details = [f"Flight {head[2]} → {head[3]}", head[1]] + \
+              [f"{code} {hhmmss(a).removesuffix(' UTC')}–{hhmmss(b)}" for code, a, b in rows]
+    return result("data", "Maintenance data report (FD)" + (f", {phase}" if phase else "") +
+                  (f", {plural(len(rows), 'code')}" if rows else ""), details)
+
+
 # Delta's APM cruise performance report: comma-separated, most fields padded with empty
 # ones, after a header of tail, flight (plus one digit), route and date/time:
 #
@@ -853,7 +878,7 @@ def translate_monitoring(msg):
     tagged = translate_tagged_weather(text)
     if tagged:
         return tagged
-    for reader in (translate_hydn, translate_pnm4, translate_delta_apm, translate_a86, translate_takeoff):
+    for reader in (translate_hydn, translate_pnm4, translate_delta_apm, translate_a86, translate_takeoff, translate_fd):
         report = reader(text)
         if report:
             return report

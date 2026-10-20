@@ -107,3 +107,13 @@ def test_takeoff_reports():
     assert "Took off 13:56 UTC" in r["details"]
     r = read("#DFBTKO6134972149KDENKSMF093026142204\r\n114190005338014501503<<<<00125<\r\n1407086905200920")
     assert "Took off 14:22:04 UTC" in r["details"]
+
+
+def test_delta_fd_report():
+    msg = {"label": "H1", "sublabel": "DF", "flight": "DL2834", "kind": "acars",
+           "text": "FD0A8115N873DN30090901 850155328341KLASKMSPCRS \r\n2700\r\n34350X11081614070985090113\r\n"
+                   "34350X18081614072700090113\r\n"}
+    r = translate.translate(msg)
+    assert r["summary"] == "Maintenance data report (FD), cruise, 2 codes"
+    assert r["details"] == ["Flight KLAS Las Vegas → KMSP Minneapolis", "N873DN",
+                            "34350X11 08:16:14–09:01:13 UTC", "34350X18 08:16:14–09:01:13 UTC"]
