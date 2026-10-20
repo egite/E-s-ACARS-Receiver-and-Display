@@ -228,3 +228,10 @@ def test_frontier_eta_and_landing_data_request():
         return translate.translate({"label": label, "flight": flight, "kind": "acars", "text": text})
     assert read("14", "F92141", "5,,,Y,N,Y,KPHX,191242,7275,,,,,")["summary"].startswith("ETA 19:12:42 UTC at KPHX")
     assert read("4P", "UP7831", "285,C,,1,09/30,RFD,LAX,,C083")["summary"].startswith("Crew requested landing data for LAX")
+
+
+def test_report_239_feeds_the_wind_map():
+    msg = {"label": "H1", "kind": "acars", "ts": 1790742745.0,
+           "text": "A321,059330,1,1,TB000000/REP239,00,00,4/239N113DX0453093026043217775N38764W105 15340-14-43209 64AF0501"}
+    assert translate.observations(msg) == [{"ts": 1790742745.0, "lat": 38.764, "lon": -105.015, "alt": 34000,
+                                            "temp": -43, "wdir": 209, "wspd": 64}]

@@ -1161,8 +1161,9 @@ REP239_LONG = re.compile(r"239N\w+?\d{15}([NS])([\d ]{5})([EW])([\d ]{6})(\d{3})
 REP239_SHORT = re.compile(r" (\d{4})(-1\d{4})(\d{3})([- \d]{3})([- \d]{3})([ \d]{3})([ \d]{3})A")
 
 
-def report239(text):
-    """(position, details) from a report 239's snapshot block, or None."""
+def report239_values(text):
+    """The snapshot block's numbers - lat, lon, flight level, total and static air temperature,
+    wind - or None. Shared by the translation and the wind map."""
     at = text.find("239N")
     if at < 0:
         return None
@@ -1179,10 +1180,19 @@ def report239(text):
     level, tat, sat, wind_dir, wind_kt = rest
     if not (tat.strip(" -") and sat.strip(" -")):
         return None
-    details = [latlon(lat, lon), f"FL{int(level)}",
-               f"Outside air {int(sat)}\u00b0C (total {int(tat)}\u00b0C)",
-               f"Wind {pad(wind_dir)}\u00b0 at {pad(wind_kt)} kt"]
-    return {"lat": lat, "lon": lon, "src": "Report 239"}, details
+    return {"lat": lat, "lon": lon, "level": int(level), "tat": int(tat), "sat": int(sat),
+            "wdir": pad(wind_dir), "wspd": pad(wind_kt)}
+
+
+def report239(text):
+    """(position, details) from a report 239's snapshot block, or None."""
+    v = report239_values(text)
+    if not v:
+        return None
+    details = [latlon(v["lat"], v["lon"]), f"FL{v['level']}",
+               f"Outside air {v['sat']}\u00b0C (total {v['tat']}\u00b0C)",
+               f"Wind {v['wdir']}\u00b0 at {v['wspd']} kt"]
+    return {"lat": v["lat"], "lon": v["lon"], "src": "Report 239"}, details
 
 
 def translate_monitoring(msg):
@@ -2246,6 +2256,12 @@ def observations(msg):
         out.append({"ts": _obs_time(m[9][:4], ts), "lat": round(lat, 4), "lon": round(lon, 4), "alt": int(m[10]) * 100,
                     "temp": int(m[11][1:]) * (-1 if m[11][0] == "M" else 1), "wdir": int(m[12]), "wspd": int(m[13])})
         return out
+    # Report 239's snapshot: position 1.3 km from ADS-B, and a wind that shrinks the spread of
+    # cruise ground speeds from 38 kt to 7 (see report239). Taken at the time it was sent.
+    v = report239_values(re.sub(r"[\r\n]", "", text)) if "239N" in text else None
+    if v and v["level"] > 0:
+        return [{"ts": ts, "lat": round(v["lat"], 4), "lon": round(v["lon"], 4), "alt": v["level"] * 100,
+                 "temp": v["sat"], "wdir": v["wdir"], "wspd": v["wspd"]}]
     # Label 4T AGFSR: 4034.0N10232.1W/370/…/M48/243054
     m = re.search(r"AGFSR \w+/\d\d/\d\d/\w{6}/(\d{4})Z/\d+/(\d\d)(\d\d\.\d)([NS])(\d{3})(\d\d\.\d)([EW])/(\d{3})/[^/]*/\d*/\d*/([MP]\d\d)/(\d{3})(\d{3})", text)
     if m:
