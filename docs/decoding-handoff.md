@@ -164,6 +164,14 @@ were label 15, UPS `*POS`, FedEx `PO6`, the weather-profile layouts above and th
 forms, and those are now read. Useful references: airframesio/acars-message-documentation on
 GitHub (label 15 layout, 5Z command codes) and the acarsonline.pbworks.com label list.
 
+**Measure what the screen shows, not the archive's blocks.** Until 21 October the sweep judged
+every archived block alone, and called 95,000 messages unread. VDL2 multi-block reports are
+joined by the server in memory, so the archive keeps each block separately and the middle
+of a report looks like nothing. Replayed through the server's own `BlockAssembler` (now
+`web/blocks.py`, so the tool can import it) the pile is 31,180 of 782,188, and stripping
+the inline `#DFB` sublabel that hid 6,701 Airbus and United monitoring reports from their
+patterns brings it lower still.
+
 ## Open, in rough order of tractability
 
 1. ~~Southwest label 37 origin and destination.~~ Solved 20 October, not by attack: see

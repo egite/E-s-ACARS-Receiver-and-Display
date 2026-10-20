@@ -12,6 +12,9 @@ Two things to know before trusting the numbers:
   - ARINC 622 messages (CPDLC, ADS-C) decode live through libacars and only show as read on
     replay in files written after 20 October, so they are excluded here. Include them with
     --with-arinc622 and the count roughly doubles for no reason.
+  - Multi-block reports are joined the way the server joins them before being judged
+    (--blocks judges each archived block alone, which is how this tool counted before
+    21 October and overstates the pile by tens of thousands).
   - Most of what remains is engine-monitoring continuation blocks (United, Southwest,
     Frontier H1/DF), which have no text structure and are correctly left generic. Look for
     buckets whose examples carry coordinates, times, airport codes or a repeating layout.
@@ -62,6 +65,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "web"))
+import blocks  # noqa: E402
 import translate  # noqa: E402
 
 
@@ -94,16 +98,38 @@ def haversine_km(lat1, lon1, lat2, lon2):
     return 2 * 6371 * math.asin(math.sqrt(a))
 
 
+def assembled(archive):
+    """Archived messages as the screen ends up showing them: multi-block reports joined by
+    the server's own BlockAssembler, each message yielded once its blocks can no longer
+    arrive. The archive keeps every block separately, and judged alone a middle block of a
+    report the screen reads in full looks unread."""
+    assembler, pending = blocks.BlockAssembler(), collections.deque()
+    for msg in records(archive):
+        msg = {"reg": None, "flight": None, "icao": None, "label": None, "msgno": None, **msg}
+        msg.setdefault("kind", "acars")
+        msg["text"] = msg.get("text") or ""
+        try:
+            msg["english"] = translate.translate(dict(msg, english=None))
+        except Exception as exc:  # a crash is the most important finding of all
+            msg["english"] = {"category": "CRASH", "summary": f"{type(exc).__name__}: {exc}", "generic": True}
+        assembler.observe(msg)
+        pending.append(msg)
+        while pending and msg["ts"] - pending[0]["ts"] > blocks.BLOCK_WINDOW_SECS:
+            yield pending.popleft()
+    yield from pending
+
+
 def sweep(args):
     buckets, examples, total = collections.Counter(), {}, 0
-    for msg in records(args.archive):
+    for msg in assembled(args.archive) if not args.blocks else records(args.archive):
         text = (msg.get("text") or "").strip()
-        if len(text) < 6:
+        if len(text) < 6 or msg.get("kind") == "partial":
             continue
         if not args.with_arinc622 and "USADCXA." in text:
             continue
         total += 1
-        r = unread(msg)
+        r = msg["english"] if not args.blocks else unread(msg)
+        r = r if r and (r.get("generic") or r["category"] in ("encoded", "other", "CRASH")) else None
         if not r:
             continue
         key = (r["category"], msg.get("label"), msg.get("sublabel") or "", (msg.get("flight") or "")[:2], shape(text))
@@ -262,6 +288,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0], formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
     parser.add_argument("--archive", default=str(ROOT / "archive" / "messages"))
     parser.add_argument("--with-arinc622", action="store_true")
+    parser.add_argument("--blocks", action="store_true", help="judge every archived block alone, without joining")
     parser.add_argument("--top", type=int, default=60)
     parser.add_argument("--examples", type=int, default=2)
     parser.add_argument("--width", type=int, default=200)

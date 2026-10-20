@@ -749,7 +749,10 @@ def translate_pnm4(text):
 
 
 def translate_monitoring(msg):
-    text = msg["text"]
+    # H1 reports can carry their sublabel inline ("#DFB", "#CFB") when the decoder didn't
+    # split it off, which kept every pattern below anchored on the report's own first
+    # characters from matching.
+    text = re.sub(r"^#[A-Z0-9]{2}B", "", msg["text"])
     tagged = translate_tagged_weather(text)
     if tagged:
         return tagged
