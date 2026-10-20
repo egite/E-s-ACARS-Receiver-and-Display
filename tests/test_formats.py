@@ -204,5 +204,20 @@ def test_airline_position_formats_21_october():
 def test_united_label_49():
     r = translate.translate({"label": "49", "flight": "UA0761", "kind": "acars",
                              "text": "01ERDCUAL761    /010005EDDMKDEN\r\n+40002259.7- 21.1"})
-    assert r["summary"] == "Flight data report (ERDC), 40,002 ft"
+    assert r["summary"] == "Flight phase report (en route \u2192 descent), 40,002 ft"
     assert r["details"][2:] == ["Calibrated airspeed 260 kt", "Total air temperature -21.1°C"]
+
+
+def test_more_formats_21_october():
+    def read(label, flight, text):
+        return translate.translate({"label": label, "flight": flight, "kind": "acars", "text": text})
+    climb = read("49", "UA0143", "01ICCLUAL143    /021752KDENRJAA\r\n+ 7193220.7+ 25.5")
+    assert climb["summary"] == "Flight phase report (initial climb \u2192 climb), 7,193 ft"
+    assert climb["details"][-1] == "Total air temperature 25.5\u00b0C"
+    signed = read("16", "TK012E", "/+41.634/-105.260/34996/0210/2324/62000/0959/")
+    assert signed["position"]["lon"] == -105.26
+    assert read("33", "AS0497", "39,D,01,KSEA,KMCI,19R,,,,,,,,6,5,0,0,0,0,0,0,0,0,0,0,153.0,1238")["summary"] \
+        == "Runway data for KMCI Kansas City runway 19R"
+    assert read("33", "OO0000", "Q,H,30SEP26 12:55:42,22120661,30SEP,5829,KBIL,KDEN,4976,KDEN,59965,4200,35L,6,35R,6,,0,N")["summary"] \
+        == "Runway data for KDEN Denver runway 35L"
+    assert read("10", "BA09SW", "MET01KMSP")["summary"].startswith("Crew requested weather for KMSP")

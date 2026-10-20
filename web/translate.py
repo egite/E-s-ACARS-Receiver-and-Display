@@ -478,10 +478,11 @@ def translate_position_formats(label, text, airline):
                            f"Heading {heading:.0f}\u00b0", f"Fuel on board {int(m[11]):,} lb"],
                           position={"lat": lat, "lon": lon, "src": f"Label 83 report"})
     if label == "16":
-        m = re.match(r"/([NS])(\d+\.\d+)/([EW])(\d+\.\d+)/(\d{5})/\d{4}/(\d{4})/(\d+)/(\d{4})/", text)
+        # Hemisphere letters or signs: "/N039.65/W104.66/" and "/+41.634/-105.260/".
+        m = re.match(r"/([NS+-])(\d+\.\d+)/([EW+-])(\d+\.\d+)/(\d{4,5})/\d{4}/(\d{4})/(\d+)/(\d{4})/", text)
         if m:
-            lat = float(m[2]) * (-1 if m[1] == "S" else 1)
-            lon = float(m[4]) * (-1 if m[3] == "W" else 1)
+            lat = float(m[2]) * (-1 if m[1] in "S-" else 1)
+            lon = float(m[4]) * (-1 if m[3] in "W-" else 1)
             return result("position", f"Position report at {hhmmss(m[6])}, {feet(int(m[5]))}",
                           [latlon(lat, lon), f"ETA {hhmmss(m[8])}", f"Fuel {int(m[7]):,} (airline units)"],
                           position={"lat": lat, "lon": lon, "src": "Label 16 report"})
@@ -500,11 +501,17 @@ def translate_position_formats(label, text, airline):
         # Mach from airspeed and altitude, then static temperature from the total, give a true
         # airspeed 22 kt from ADS-B ground speed at the median and temperatures 2-16 C above
         # standard. What the two names stand for isn't known.
-        m = re.search(r"(ERDC|CLER)\w*? */\d\d(\d\d)(\d\d)(" + ICAO_AP + ")(" + ICAO_AP + r")\s*([+-]\d{5})([\d.]+)([+-]) *([\d.]+)", text)
+        # The four letters are a phase change in the PHASE_CODES pair notation: ICCL initial
+        # climb to climb, CLER climb to en route, ERDC en route to descent, DCAP descent to
+        # approach (EC is not known) - and the altitudes and directions fit: ICCL at ~7,000 ft
+        # leaving Denver, ERDC at cruise inbound, DCAP at ~7,800 ft arriving.
+        m = re.search(r"([A-Z]{2})([A-Z]{2})UAL\w* */\d\d(\d\d)(\d\d)(" + ICAO_AP + ")(" + ICAO_AP + r")\s*([+-])([ \d]{5})(\d{3}\.\d)([+-]) *([\d.]+)", text)  # fixed width: "+ 7193220.7+ 25.5"
         if m:
-            return result("data", f"Flight data report ({m[1]}), {feet(int(m[6]))}",
-                          [f"Flight {m[4]} \u2192 {m[5]}", f"Recorded {m[2]}:{m[3]} UTC",
-                           f"Calibrated airspeed {float(m[7]):.0f} kt", f"Total air temperature {m[8].replace('+', '')}{m[9]}\u00b0C"])
+            change = " \u2192 ".join(PHASE_CODES.get(c, c) for c in (m[1], m[2]))
+            return result("data", f"Flight phase report ({change}), {feet(int(m[8].strip()))}",
+                          [f"Flight {m[5]} \u2192 {m[6]}", f"Recorded {m[3]}:{m[4]} UTC",
+                           f"Calibrated airspeed {float(m[9]):.0f} kt",
+                           f"Total air temperature {'-' if m[10] == '-' else ''}{m[11]}\u00b0C"])
     if label == "4T":
         m = re.match(r"ETA \w+/\d\d/\d\d (\w{3,4}) (\d\d)(\d\d)Z", text)
         if m:
@@ -518,6 +525,18 @@ def translate_position_formats(label, text, airline):
         m = re.match(r"C3\d\d\s+\d(.+)", text, re.S)
         if m and re.search(r"[A-Z]{2,}", m[1]):
             return result("crew", f"Crew message: \u201c{reflow([l for l in re.split(r'[\r\n]+', m[1]) if l.strip()])}\u201d")
+    if label == "10" and airline == "BA":
+        m = re.match(r"MET\d\d(\w{3,4})$", text)
+        if m:
+            return result("request", f"Crew requested weather for {m[1]}")
+    if label in ("3J", "3S"):
+        # Sent half a minute before receipt, all 3J from Denver in the climb; what they are
+        # for isn't known, so only the route and time are given.
+        m = re.match(r"\d\d(\d\d)(\d\d) \d\d([A-Z]{3}) ([A-Z]{3})\b", text)
+        if m:
+            return result("flight", f"Flight message {m[3]} \u2192 {m[4]}", [f"Sent {m[1]}:{m[2]} UTC"])
+    if "/CMUVER/" in text[:10]:
+        return result("data", "Datalink unit software versions", [f"\u201c{reflow([l for l in text.splitlines() if l.strip()])}\u201d"])
     if label == "10" and airline == "FX":
         m = re.search(r"/WXREQ\s*/TYP \d/STA (\w{3,4})", text)
         if m:
@@ -2113,10 +2132,13 @@ def translate(msg, raw=None):
     if m:
         airports = ", ".join(re.findall(ICAO_AP, m.group(1)))
         return result("request", f"Crew requested weather for {airports}")
-    m = re.match(r"(?:LDR\d\d,)?\d+,[A-Z],\d\d,(" + ICAO_AP + "),(" + ICAO_AP + r"),(\d\d[LRC]?)/", text)
+    m = re.match(r"(?:LDR\d\d,)?\d+,[A-Z],[\d ]{2},(" + ICAO_AP + "),(" + ICAO_AP + r"),(\d{1,2}[LRC]?)[/,]", text)
     # Also origin, destination, landing airport and runway further into the line, ICAO or
     # IATA ("...,KLAS,KMSP,KMSP,12R/" from Sun Country, "...,RFD,LAX,LAX,06R/").
     m = m or re.search(r"\d+,C,.*?,([A-Z]{3,4}),([A-Z]{3,4}),\2,(\d\d[LRC]?)/", text)
+    # SkyWest: "Q,H,<time>,...,KBIL,KDEN,4976,KDEN,59965,4200,35L,6,35R,6" - route, then the
+    # landing airport and its runways.
+    m = m or re.match(r"Q,H,[^,]*,[^,]*,[^,]*,[^,]*,(" + ICAO_AP + "),(" + ICAO_AP + r"),[^,]*,\2,[^,]*,[^,]*,(\d\d[LRC]?)", text)
     if m:
         return result("flight", f"Runway data for {m.group(2)} runway {m.group(3)}", [f"Flight {m.group(1)} → {m.group(2)}"])
     if label == "10" and text.startswith("/N"):
