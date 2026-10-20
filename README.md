@@ -193,6 +193,10 @@ print(f"{generic} messages without a specific translation (counted before block 
 EOF
 ```
 
+Reading the message contents is a longer story than the sections above: what is decoded,
+what resisted, the evidence each field was accepted on, and the mistakes worth not making
+twice are in [docs/decoding-handoff.md](docs/decoding-handoff.md).
+
 ## Airport data
 
 `web/airports.json` is 32,000 airports with ICAO code, IATA code, name, position and a
