@@ -171,3 +171,14 @@ def test_arinc620_fixed_formats():
     assert read("QF", "DEN2346FAR")["summary"] == "Took off from DEN at 23:46 UTC, bound for FAR"
     assert read("Q2", "   1656  76/DS KDEN")["summary"] == "ETA 16:56 UTC at KDEN Denver"
     assert read("QF", "\x00\x00\x002115\x00\x00\x00OS    /FUL0892")["summary"].startswith("Took off")
+
+
+def test_afn_logon():
+    def read(label, text):
+        return translate.translate({"label": label, "flight": "XX0001", "kind": "acars", "text": text})
+    r = read("B0", "/KUSA.AFN/FMHEJA18,..N18QS,A13FC2,131209/FPON40033W105048,1/FCOADS,01/FCOATC,01AEEC")
+    assert r["summary"] == "Datalink logon to ATC centre KUSA"
+    assert r["details"] == ["Flight EJA18", "N18QS", "ICAO A13FC2", "Sent 13:12:09 UTC", "40.05°N 105.08°W",
+                            "Offers ADS-C v1, CPDLC v1"]
+    peripheral = read("H1", "#M1B/B0 KUSA.AFN/FMHUAL1767,.N77261,,133405/FPON42489W103082,1/FCOATC,01/FCOADS,0185F5")
+    assert peripheral["summary"] == "Datalink logon to ATC centre KUSA" and peripheral["position"]
