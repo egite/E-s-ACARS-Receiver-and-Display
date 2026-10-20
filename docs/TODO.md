@@ -49,4 +49,3 @@ Either way the restart needs to work under systemd (`systemd/acars-web.service`)
   positions sit ~150 km behind the aircraft); with the track, the moment the report
   describes can be found and its trigger identified. VRS gives the current fix only, so the
   server would keep a short per-aircraft history from its polls.
-- Push the decoding commits to GitHub (`origin`) when ready; none have been pushed.
