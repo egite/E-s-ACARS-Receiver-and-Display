@@ -117,3 +117,16 @@ def test_delta_fd_report():
     assert r["summary"] == "Maintenance data report (FD), cruise, 2 codes"
     assert r["details"] == ["Flight KLAS Las Vegas → KMSP Minneapolis", "N873DN",
                             "34350X11 08:16:14–09:01:13 UTC", "34350X18 08:16:14–09:01:13 UTC"]
+
+
+def test_crzn_cruise_report():
+    def read(text):
+        return translate.translate({"label": "H1", "flight": "UA2255", "kind": "acars", "text": text})
+    r = read("CRZN76529KHDNKDEN30091327 845  625-138 21004062013568022551SCR14G4\r\n100802454658610 791 792 918 918596562"
+             " 2861 2860  574  5744849 98 9901\r\n3013012019229137061024023016153148110LO LO 000110027913788N403863N403\r\n"
+             "863S1057386S1057386 81  -16137440")
+    assert r["summary"] == "Cruise performance report, 21,004 ft, Mach 0.620"
+    assert r["position"] == {"lat": 40.3863, "lon": -105.7386, "src": "United CRZN report"}
+    assert "Outside air -13.8°C" in r["details"]
+    r = read("CRZN343PN1483PHX ORD 3009152527351907 -227-492 37002077115248027651SCR1U A30  38703 38428 ")
+    assert r["summary"] == "Cruise performance report, 37,002 ft, Mach 0.771"
