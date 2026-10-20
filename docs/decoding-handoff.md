@@ -198,4 +198,8 @@ patterns brings it lower still.
    the aircraft or ~150 km behind it along its track, with the report time only seconds
    old. It is a position recorded at some event the message doesn't name, so it is not
    shown; find what triggers the sample before putting it on the map.
-5. **Label MA**: don't. It is closed on entropy.
+5. **Lufthansa label 1L** (220 messages): columns 0-1 and 6-7 carry 3.8 bits against 5.2
+   elsewhere and six-character runs repeat across messages, so there is structure, but no
+   column holds time, flight level, speed or track under a consistent substitution, keyed
+   on the header or not, and none of these aircraft send a route in clear to crib from.
+6. **Label MA**: don't. It is closed on entropy.
