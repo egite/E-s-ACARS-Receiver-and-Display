@@ -5,8 +5,10 @@
     "acars": {
       "enabled": true,
       "decoder": "acarsdec",
+      "sdr": "rtlsdr",
       "device": "ACARS1",
       "gain": 40,
+      "lna_state": 0,
       "ppm": 0,
       "frequencies": [129.125, 130.025, 130.450, 131.125, 131.550],
       "binary": "third_party/acarsdec/build/acarsdec",
@@ -18,8 +20,10 @@
     "vdl2": {
       "enabled": true,
       "decoder": "dumpvdl2",
+      "sdr": "rtlsdr",
       "device": "VDL2_1",
       "gain": 40,
+      "lna_state": 0,
       "ppm": 0,
       "frequencies": [136.650, 136.700, 136.725, 136.775, 136.800, 136.875, 136.975],
       "binary": "third_party/dumpvdl2/build/src/dumpvdl2",

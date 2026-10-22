@@ -1,7 +1,7 @@
 # ACARS · VDL2 Live
 
 A self-hosted ACARS and VDL Mode 2 receiver for a Raspberry Pi (or any Debian machine) with RTL-SDR
-dongles. It decodes aircraft datalink messages, translates them into plain English, and shows them on a
+dongles or an SDRplay RSP. It decodes aircraft datalink messages, translates them into plain English, and shows them on a
 live web page: a map, flight cards with message timelines, a raw feed, and a receiver health / stats page.
 
 - **Two receivers at once**: classic VHF ACARS (acarsdec) and VDL2 (dumpvdl2), one dongle each — or [xng](https://github.com/airframesio/xng) for either, chosen in `config.json`.
@@ -32,6 +32,8 @@ airband bandpass filter and a splitter.
 - **Antenna**: a vertical airband antenna (118–137 MHz). Height matters more than anything else; ground
   stations are rarely heard from low sites, but aircraft at altitude are.
 - **Dongles**: one per receiver. TCXO dongles (±1 ppm, e.g. RTL-SDR Blog V3/V4) avoid most tuning drift.
+  An SDRplay RSP (RSP1A and the like) works too, with up to 10 MHz of capture instead of 2.4 and a
+  0.5 ppm reference; see *Using an SDRplay RSP* below.
 - **USB bandwidth**: all Pi 4 USB ports share one USB 2.0 link. ACARS runs at ~2.5 MS/s; 3.2 MS/s dropped
   ~18% of samples here when another SDR was streaming on the same Pi.
 
@@ -97,9 +99,10 @@ rates and the librtlsdr preload are edited in the file.
 | Key | Meaning |
 |---|---|
 | `home.lat`, `home.lon`, `home.name` | Receiver location (map centre, and the sanity limit for positions parsed from messages) |
-| `receivers.acars` / `receivers.vdl2` | `enabled`, `decoder` (see below), `device` (serial or index), `gain` (dB or `"auto"`), `ppm`, `frequencies` (MHz), `binary`, `log_file` (decoded text log, `null` = off) |
+| `receivers.acars` / `receivers.vdl2` | `enabled`, `decoder` (see below), `sdr` (`"rtlsdr"`, default, `"sdrplay"`, or `"shared"` to decode a slice of the other receiver's RSP capture), `device` (serial or index), `gain` (dB or `"auto"`; on an RSP the IF gain reduction, see below), `lna_state` (RSP only), `ppm`, `frequencies` (MHz), `binary`, `log_file` (decoded text log, `null` = off) |
 | `receivers.*.decoder` | Which decoder to run: ACARS takes `"acarsdec"` (default) or `"xng"`; VDL2 takes `"dumpvdl2"` (default) or `"xng"`. Set per receiver, so one can use xng while the other doesn't |
-| `receivers.*.xng_binary`, `.sample_rate`, `.demod_effort` | xng only: path to the binary (`null` = find `xng` on `PATH`), capture rate in Hz (`null` = derived from `frequencies`), and `"live"` or `"max"` demod effort |
+| `receivers.*.sample_rate` | Capture rate in Hz (`null` = derived from `frequencies`, or acarsdec's and dumpvdl2's own defaults). acarsdec wants a multiple of 12 kHz, xng of 24 kHz; dumpvdl2 ignores it |
+| `receivers.*.xng_binary`, `.demod_effort` | xng only: path to the binary (`null` = find `xng` on `PATH`) and `"live"` or `"max"` demod effort |
 | `librtlsdr_preload` | Path to a librtlsdr that detaches the DVB driver itself; only needed if a self-built copy in `/usr/local` lacks that (the install script fills it in) |
 | `http_host`, `http_port` | Web server address (default `0.0.0.0:8686`) |
 | `acars_udp_port`, `vdl2_udp_port` | Local UDP ports the decoders send JSON to |
@@ -148,11 +151,94 @@ tolerates far more tuning error than VDL2 (2 ppm is 262 Hz at 131 MHz, against 2
 so this is a periodic check rather than something that needs watching.
 
 **Frequencies.** The defaults are the common US channels. ACARS channels must fit within ~2.4 MHz (one
-dongle's bandwidth); VDL2 channels within ~1 MHz. Europe uses different ACARS channels (e.g. 131.525,
+dongle's bandwidth; an RSP stretches that, see below); VDL2 channels within ~1 MHz. Europe uses different ACARS channels (e.g. 131.525,
 131.725, 131.825) and mostly VDL2 136.975 plus local channels. The Stats page shows traffic per frequency.
 
 After changing receiver settings: `sudo systemctl restart acars-decoder@acars acars-decoder@vdl2`.
 `health` settings are picked up automatically within 30 seconds; anything else needs `sudo systemctl restart acars-web`.
+
+## Using an SDRplay RSP
+
+Either receiver can run on an SDRplay RSP (tested with an RSP1A) instead of an RTL-SDR dongle. The
+draw is bandwidth: an RSP captures up to 10 MHz where a dongle manages 2.4, so one radio can carry
+every ACARS channel from 129.125 to 131.825 with room to spare, and it has a 0.5 ppm reference, so
+`ppm` stays at 0. One RSP serves one receiver; a program that has the RSP open (rtl_airband, SDRuno,
+another decoder) keeps everyone else out, so stop it first.
+
+**Install the vendor API, then rebuild.** SDRplay ships no apt package; download the Linux API
+installer from sdrplay.com and run it, which installs `libsdrplay_api` and the `sdrplay` service.
+dumpvdl2 links the API directly and acarsdec and xng reach it through SoapySDR, so also build
+[SoapySDRPlay3](https://github.com/pothosware/SoapySDRPlay3), then rebuild the decoders against both:
+
+```bash
+sudo systemctl enable --now sdrplay
+rm -rf third_party/acarsdec/build third_party/dumpvdl2/build
+./install.sh --no-services
+SoapySDRUtil --find    # should list driver = sdrplay with the RSP's serial number
+```
+
+`install.sh` already installs `libsoapysdr-dev`, so acarsdec and dumpvdl2 pick SoapySDR up on their
+own; they pick the SDRplay API up only if it is present when they are built, which is why the rebuild
+matters. If `SoapySDRUtil --find` shows the RSP only as `driver = miri` the Soapy module is missing.
+
+**Configure the receiver.** Set `sdr` to `"sdrplay"` and `device` to the serial number
+`SoapySDRUtil --find` printed. Gain is counted the SDRplay way: `gain` is the **IF gain reduction**
+in dB, 20 (most gain) to 59 (least), or `"auto"` for the AGC, and `lna_state` is the LNA step (0 is
+the most gain; an RSP1A has 0–9). A decent airband start is `"gain": 38` with `"lna_state": 3`, or
+`"auto"`. Only dumpvdl2 honours `lna_state`; acarsdec and xng go through SoapySDR, which cannot set
+the LNA separately, so they run at LNA state 0 and `receiver.py` says so if `lna_state` is set.
+
+```json
+"acars": {
+  "decoder": "acarsdec", "sdr": "sdrplay", "device": "1234567890",
+  "gain": 38, "lna_state": 3, "ppm": 0,
+  "frequencies": [129.125, 130.025, 130.425, 130.450, 131.125, 131.425, 131.475, 131.525, 131.550]
+}
+```
+
+**Mind the IF filter.** The RSP's analogue IF filter is 1.536 MHz wide unless something asks for 5 MHz
+or more, and what asks differs by decoder: xng's filter follows the capture rate (SoapySDR picks it
+from `sample_rate`), acarsdec asks for a filter as wide as the channel span, and dumpvdl2's own input
+fixes it at 1.536 MHz, which covers the VDL2 band. So the 2.4 MHz-wide US ACARS set above sits partly
+in the filter's skirt on an RSP, and `receiver.py` prints a note when the channels are wider than the
+filter. The ways out: with acarsdec, a channel set 5 MHz or wider (say adding 136.800, used for ACARS
+in some regions) gets the 8 MHz filter at ~7.7 MS/s, which acarsdec handles at a few percent of a
+core per MS/s; with xng, `sample_rate` of 5 000 000 or more does it, but xng's single-threaded
+pipeline needs roughly 25% of a 2015 laptop core per MS/s, so on xng keep the channels within
+±0.75 MHz of centre instead. How much the skirt costs is a matter of measuring at your site: the
+filter rolls off rather than cutting, and strong ACARS still decodes well past its edge.
+
+**One RSP for both receivers.** An RSP's 8 MHz of capture holds the ACARS band *and* the VDL2 band
+(129.125 to 136.975 MHz is 7.85 MHz), but the SDRplay API lets only one program open the radio.
+`tools/soapy-tee` is a small SoapySDR module that gets around that: the ACARS receiver opens the RSP
+through it (`driver=tee`), and while acarsdec streams, the module mixes the VDL2 band down, decimates
+it to 1.05 MS/s and writes it to a FIFO, which dumpvdl2 reads with `--iq-file`. `install.sh` builds
+and installs it. To use it, set the VDL2 receiver to `"sdr": "shared"` (its `device`, `gain` and `ppm`
+are then the ACARS receiver's), keep its decoder on dumpvdl2, and leave the ACARS receiver on
+`"sdr": "sdrplay"`:
+
+```json
+"acars": { "decoder": "acarsdec", "sdr": "sdrplay", "device": "1234567890", "gain": "auto", "frequencies": [...] },
+"vdl2":  { "decoder": "dumpvdl2", "sdr": "shared",  "frequencies": [136.650, 136.700, 136.725, 136.775, 136.800, 136.875, 136.975] }
+```
+
+`receiver.py` then widens the ACARS capture to cover both channel sets, on a rate that acarsdec, xng
+and the 1.05 MS/s slice all divide (steps of 4.2 MS/s; the full span above runs at 8.4 MS/s), pins
+acarsdec's centre frequency, and hands the VDL2 receiver the slice's centre. Measured here with 18
+ACARS channels and 7 VDL2 channels on one RSP1A: acarsdec with the tee about 55% of one core,
+dumpvdl2 about 35%, and no sample loss once the slice reader is connected (the tee logs any drops;
+`O` characters in the ACARS decoder's log are stream overflows, which should stop after start-up).
+The slice is filtered off the host's read thread, so a slow or absent dumpvdl2 only costs VDL2
+samples, never ACARS ones. The VDL2 unit can start before or after the ACARS one; it waits on the
+FIFO, and when the ACARS decoder restarts it sees end-of-file, exits, and systemd starts it again.
+Tuning-error monitoring still works for VDL2, but since the radio belongs to the ACARS receiver,
+auto-ppm is off for a shared receiver and the Stats page says where to set a correction.
+
+The decoders talk to the RSP differently, which is where the quirks come from: dumpvdl2 uses
+`--sdrplay3` natively (so VDL2 tuning-error tracking and auto-ppm work as on a dongle); acarsdec is
+given `--soapysdr` rather than its own `--sdrplay`, because that input leaves the API's 200 kHz
+default filter in place; xng has only SoapySDR. `tools/calibrate_ppm.py` works on an RSP too, though
+with a 0.5 ppm reference there is little to measure.
 
 ## Running
 
@@ -302,6 +388,12 @@ already on the line.
 
 - **`usb_claim_interface error -6`** — the DVB-T driver holds the dongle. Reboot after installing (the
   blacklist), or set `librtlsdr_preload` to the distro librtlsdr.
+- **An RSP receiver exits with `no available RSP devices found` or `RSP not found or not available`** —
+  another program has the RSP open (only one client at a time), the `sdrplay` service isn't running, or
+  `device` isn't the serial number `SoapySDRUtil --find` shows.
+- **`acarsdec: unrecognized option '--soapysdr'` or dumpvdl2 rejects `--sdrplay3`** — the decoder was
+  built before SoapySDR or the SDRplay API was installed. Delete its build directory and re-run
+  `install.sh --no-services`.
 - **`[R82XX] PLL not locked!`** at startup — harmless.
 - **A decoder exits with status 127 and `error while loading shared libraries`** — `systemctl status
   acars-decoder@vdl2` shows `activating (auto-restart)` and the unit loops. A distro upgrade has changed
@@ -339,6 +431,7 @@ already on the line.
 ```
 config.example.json    settings template (install.sh copies it to config.json, which git ignores)
 receiver.py            starts acarsdec / dumpvdl2 / xng from config.json
+tools/soapy-tee/       SoapySDR module that lets one RSP feed both decoders (see "Using an SDRplay RSP")
 install.sh             packages, builds, config, services
 systemd/               service templates (installed by install.sh)
 web/server.py          ingest, reassembly, aircraft tracking, VRS, WebSocket and APIs

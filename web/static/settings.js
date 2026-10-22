@@ -3,6 +3,13 @@
 // Fields are named by their dotted path in the settings object (e.g. "receivers.acars.ppm").
 
 const RX = { acars: { label: "ACARS", decoders: ["acarsdec", "xng"] }, vdl2: { label: "VDL2", decoders: ["dumpvdl2", "xng"] } };
+// How each radio is named and how its gain is counted: an RTL-SDR takes tuner gain in dB, an
+// SDRplay RSP takes IF gain *reduction* in dB (20 is the most gain, 59 the least).
+const SDR = {
+  rtlsdr: { label: "RTL-SDR", device: "serial number or index", gain: 'dB, or "auto"' },
+  sdrplay: { label: "SDRplay RSP", device: "serial number", gain: 'IF gain reduction 20–59 dB, or "auto"' },
+  shared: { label: "Shared capture", device: "not used: a slice of the other receiver's RSP", gain: "not used: set on the other receiver" },
+};
 const form = $("form"), statusEl = $("status"), saveBtn = $("save"), revertBtn = $("revert");
 let loaded = null;
 
@@ -15,8 +22,9 @@ function receiverCard(name) {
     </header>
     <div class="form-grid">
       <label class="field"><span>Decoder</span><select name="${p}.decoder">${rx.decoders.map((d) => `<option>${d}</option>`).join("")}</select></label>
-      <label class="field"><span>Dongle</span><input name="${p}.device" autocapitalize="off" spellcheck="false"><small>serial number or index</small></label>
-      <label class="field"><span>Gain</span><input name="${p}.gain" inputmode="decimal"><small>dB, or "auto"</small></label>
+      <label class="field"><span>Radio</span><select name="${p}.sdr">${Object.entries(SDR).map(([v, s]) => `<option value="${v}">${s.label}</option>`).join("")}</select></label>
+      <label class="field"><span>Device</span><input name="${p}.device" autocapitalize="off" spellcheck="false"><small data-hint="device">serial number or index</small></label>
+      <label class="field"><span>Gain</span><input name="${p}.gain" inputmode="decimal"><small data-hint="gain">dB, or "auto"</small></label>
       <label class="field"><span>ppm correction</span><input name="${p}.ppm" inputmode="numeric"><small>whole ppm</small></label>
       <label class="field wide"><span>Frequencies</span><textarea name="${p}.frequencies" rows="2" inputmode="decimal" spellcheck="false"></textarea><small>MHz, separated by commas or spaces</small></label>
     </div>
@@ -37,9 +45,20 @@ function fill(s) {
     const v = get(s, el.name);
     if (el.type === "checkbox") el.checked = !!v;
     else if (Array.isArray(v)) el.value = v.map((f) => Number(f).toFixed(3)).join(", ");
+    else if (el.tagName === "SELECT") el.value = v ?? el.options[0].value;  // older servers omit "sdr"
     else el.value = v ?? "";
   }
+  refreshHints();
   clearErrors();
+}
+
+// The device and gain hints depend on which radio is selected.
+function refreshHints() {
+  for (const name of Object.keys(RX)) {
+    const card = form.querySelector(`[name="receivers.${name}.sdr"]`)?.closest(".rx-card");
+    const sdr = SDR[card?.querySelector(`[name="receivers.${name}.sdr"]`).value] || SDR.rtlsdr;
+    for (const el of card?.querySelectorAll("[data-hint]") || []) el.textContent = sdr[el.dataset.hint];
+  }
 }
 
 function read() {
@@ -128,7 +147,7 @@ async function save() {
 
 $("receivers").innerHTML = Object.keys(RX).map(receiverCard).join("");
 form.addEventListener("input", refreshDirty);
-form.addEventListener("change", refreshDirty);
+form.addEventListener("change", (e) => { if (e.target.name?.endsWith(".sdr")) refreshHints(); refreshDirty(); });
 form.addEventListener("submit", (e) => { e.preventDefault(); if (!saveBtn.disabled) save(); });
 form.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.tagName === "INPUT") { e.preventDefault(); if (!saveBtn.disabled) save(); } });
 saveBtn.addEventListener("click", save);

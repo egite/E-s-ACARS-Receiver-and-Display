@@ -22,3 +22,5 @@ ARINC/
 # Registration-to-ICAO database (Virtual Radar Server format), shipped separately: 147 MB is
 # over GitHub's file limit
 AircraftDatabase.sqb
+run/
+tools/soapy-tee/build/

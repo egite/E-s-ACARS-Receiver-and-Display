@@ -176,9 +176,12 @@ class HealthMonitor:
                 alerts.append({"level": "warn", "receiver": name,
                                "text": f"{label} decoder restarted {r['service']['restarts_hour']} times in the last hour"})
             if r["ppm_residual"] is not None and abs(r["ppm_residual"]) >= settings["ppm_tolerance"]:
+                shared = (self.rx_cfg(name) or {}).get("sdr") == "shared"
                 alerts.append({"level": "warn", "receiver": name,
-                               "text": f"{label} dongle tuning has drifted {r['ppm_residual']:+.1f} ppm; "
-                                       f"suggested ppm setting {r['ppm_suggested']} (now {r['ppm_setting']})"})
+                               "text": f"{label} radio tuning has drifted {r['ppm_residual']:+.1f} ppm; "
+                                       + ("it shares the other receiver's radio, so set ppm there"
+                                          if shared else
+                                          f"suggested ppm setting {r['ppm_suggested']} (now {r['ppm_setting']})")})
         return {"receivers": receivers, "alerts": alerts, "auto_ppm": settings["auto_ppm"],
                 "ppm_tolerance": settings["ppm_tolerance"], "events": list(self.events)}
 
@@ -188,6 +191,8 @@ class HealthMonitor:
         rx = self.receivers["vdl2"]
         residual = rx.ppm_residual()
         now = time.time()
+        if (self.rx_cfg("vdl2") or {}).get("sdr") == "shared":
+            return  # the radio (and its ppm) belong to the host receiver; nothing here to correct
         if residual is None or abs(residual) < settings["ppm_tolerance"]:
             rx.drift_since = None
             return

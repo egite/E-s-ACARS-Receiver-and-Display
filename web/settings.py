@@ -18,7 +18,7 @@ import receiver  # noqa: E402  - reuse the decoder's own checks so a saved confi
 
 RECEIVERS = ("acars", "vdl2")
 # Keys of receivers.<name> the page edits; changing any of them restarts that decoder.
-RECEIVER_KEYS = ("enabled", "decoder", "device", "gain", "ppm", "frequencies")
+RECEIVER_KEYS = ("enabled", "decoder", "sdr", "device", "gain", "ppm", "frequencies")
 BAND_MHZ = {"acars": (118.0, 137.0), "vdl2": (118.0, 137.0)}
 
 
@@ -31,6 +31,7 @@ def editable(cfg):
         "receivers": {name: {
             "enabled": rx.get("enabled", True),
             "decoder": rx.get("decoder") or receiver.DEFAULT_DECODER[name],
+            "sdr": rx.get("sdr") or "rtlsdr",
             "device": rx.get("device"),
             "gain": rx.get("gain", "auto") if rx.get("gain") is not None else "auto",
             "ppm": rx.get("ppm", 0),
@@ -91,11 +92,20 @@ def validate(new, current):
         clean["decoder"] = rx.get("decoder")
         if clean["decoder"] not in (receiver.DEFAULT_DECODER[name], "xng"):
             errors[f"{p}.decoder"] = f"must be {receiver.DEFAULT_DECODER[name]} or xng"
+        clean["sdr"] = rx.get("sdr")
+        if clean["sdr"] not in receiver.SDRS:
+            errors[f"{p}.sdr"] = f"must be one of {', '.join(receiver.SDRS)}"
         clean["device"] = str(rx.get("device") or "").strip()
-        if not clean["device"]:
+        if not clean["device"] and clean["sdr"] != "shared":
             errors[f"{p}.device"] = "required (dongle serial number or index)"
         gain = rx.get("gain")
-        clean["gain"] = "auto" if gain in (None, "", "auto") else _number(errors, f"{p}.gain", gain, 0, 60)
+        if gain in (None, "", "auto") or clean["sdr"] == "shared":
+            clean["gain"] = "auto"
+        elif clean["sdr"] == "sdrplay":
+            clean["gain"] = _number(errors, f"{p}.gain", gain, receiver.IFGR_MIN, receiver.IFGR_MAX, integer=True,
+                                    why="an RSP's gain is set as IF gain reduction in dB (less is more gain)")
+        else:
+            clean["gain"] = _number(errors, f"{p}.gain", gain, 0, 60)
         clean["ppm"] = _number(errors, f"{p}.ppm", rx.get("ppm", 0), -200, 200, integer=True)
         freqs = rx.get("frequencies")
         if isinstance(freqs, str):
@@ -109,19 +119,29 @@ def validate(new, current):
                 errors[f"{p}.frequencies"] = f"frequencies are in MHz, between {lo:g} and {hi:g}"
         except (TypeError, ValueError):
             errors[f"{p}.frequencies"] = "list of frequencies in MHz, e.g. 131.550, 130.025"
+        out["receivers"][name] = clean
+    for name in RECEIVERS:
+        clean, p = out["receivers"][name], f"receivers.{name}"
         if clean["enabled"] and not any(k.startswith(p) for k in errors):
-            # Ask receiver.py exactly what it would ask at startup (xng capture width, etc.),
-            # merged over the keys the page doesn't edit (sample_rate, binaries).
-            merged = {**((current.get("receivers") or {}).get(name) or {}), **clean}
+            # Ask receiver.py exactly what it would ask at startup (xng capture width, a
+            # shared capture's span, etc.), merged over the keys the page doesn't edit
+            # (sample_rate, binaries), with the other receiver's new values alongside.
+            merged_cfg = {"receivers": {n: {**((current.get("receivers") or {}).get(n) or {}), **out["receivers"][n]}
+                                        for n in RECEIVERS}}
+            merged = merged_cfg["receivers"][name]
             try:
                 receiver.decoder_for(name, merged)
-                if clean["decoder"] == "xng":
+                if receiver.sdr_for(name, merged) == "shared":
+                    receiver.shared_host(name, merged, merged_cfg)
+                    receiver.slice_center(merged)
+                    if clean["decoder"] != "dumpvdl2":
+                        raise SystemExit("a shared receiver runs dumpvdl2")
+                elif receiver.shared_capture_plan(name, merged, merged_cfg) is None and clean["decoder"] == "xng":
                     receiver.xng_capture_plan(name, merged)
             except SystemExit as exc:
                 msg = str(exc).removeprefix("config.json: ").replace(f"receivers.{name}.frequencies ", "these channels ")
                 msg = msg.replace(f"set receivers.{name}.sample_rate", f"xng needs receivers.{name}.sample_rate in config.json")
-                errors[f"{p}.frequencies" if "channels" in msg else f"{p}.decoder"] = msg
-        out["receivers"][name] = clean
+                errors[f"{p}.frequencies" if "channels" in msg or "span" in msg else f"{p}.decoder"] = msg
 
     out["vrs_url"] = str(new.get("vrs_url") or "").strip()
     if out["vrs_url"] and not re.match(r"https?://[^\s/]+", out["vrs_url"]):

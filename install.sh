@@ -19,7 +19,7 @@ step() { printf '\n==> %s\n' "$*"; }
 step "Installing packages"
 sudo apt-get update
 sudo apt-get install -y build-essential cmake git pkg-config \
-  rtl-sdr librtlsdr-dev libusb-1.0-0-dev \
+  rtl-sdr librtlsdr-dev libusb-1.0-0-dev libsoapysdr-dev \
   libjansson-dev libxml2-dev zlib1g-dev libsqlite3-dev libcjson-dev libglib2.0-dev \
   python3 python3-aiohttp libjs-leaflet
 
@@ -71,6 +71,15 @@ build acarsdec https://github.com/f00b4r0/acarsdec.git build/acarsdec "$ACARSDEC
 step "Building dumpvdl2"
 build dumpvdl2 https://github.com/szpajder/dumpvdl2.git build/src/dumpvdl2
 
+step "Building the SoapySDR tee module (lets one RSP feed both decoders)"
+if [[ ! -f /usr/local/lib/SoapySDR/modules0.8/libSoapyTee.so ]] || [[ tools/soapy-tee/SoapyTee.cpp -nt /usr/local/lib/SoapySDR/modules0.8/libSoapyTee.so ]]; then
+  cmake -S tools/soapy-tee -B tools/soapy-tee/build -DCMAKE_BUILD_TYPE=Release
+  cmake --build tools/soapy-tee/build -j"$(nproc)"
+  sudo cmake --install tools/soapy-tee/build
+else
+  echo "SoapyTee already installed."
+fi
+
 step "Creating config.json"
 if [[ ! -f config.json ]]; then
   cp config.example.json config.json
@@ -102,3 +111,6 @@ fi
 
 step "Done"
 echo "Next: give each dongle a unique serial and measure its ppm (see README.md)."
+if ! ldconfig -p | grep -q libsdrplay_api; then
+  echo "For an SDRplay RSP: install the vendor API first, then rebuild (see README.md, 'Using an SDRplay RSP')."
+fi

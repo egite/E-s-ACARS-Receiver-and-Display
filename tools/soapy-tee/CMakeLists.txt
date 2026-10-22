@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.10)
+project(SoapyTee CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -ffast-math")
+find_package(SoapySDR CONFIG REQUIRED)
+SOAPY_SDR_MODULE_UTIL(TARGET SoapyTee SOURCES SoapyTee.cpp)

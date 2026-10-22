@@ -35,7 +35,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "web"))
+sys.path.insert(0, str(ROOT))
 from monitor import PPM_MIN_SAMPLES, PPM_MIN_SNR_DB  # noqa: E402  (same thresholds as the live monitor)
+import receiver  # noqa: E402  (the same input flags the VDL2 receiver would use for this radio)
 
 # Fallback when config.json has no VDL2 frequencies: the strongest channel almost everywhere.
 DEFAULT_VDL2_FREQ = 136.975
@@ -45,17 +47,15 @@ def load_config(path):
     return json.loads(Path(path).read_text())
 
 
-def collect(binary, device, gain, ppm, freqs_mhz, port, secs, verbose):
-    """Run dumpvdl2 on `device` for `secs` and return its freq_skew samples (ppm)."""
+def collect(binary, name, rx, freqs_mhz, port, secs, verbose):
+    """Run dumpvdl2 on receiver `name`'s radio for `secs` and return its freq_skew samples (ppm)."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(("127.0.0.1", port))
     sock.settimeout(1.0)
 
-    cmd = [str(binary),
-           "--output", f"decoded:json:udp:address=127.0.0.1,port={port}",
-           "--rtlsdr", str(device), "--correction", str(int(ppm)),
-           "--gain", str(gain)] + [str(round(f * 1_000_000)) for f in freqs_mhz]
+    cmd = [str(binary), "--output", f"decoded:json:udp:address=127.0.0.1,port={port}"]
+    cmd += receiver.dumpvdl2_input_args(name, rx) + [str(round(f * 1_000_000)) for f in freqs_mhz]
     if verbose:
         print("  " + " ".join(cmd))
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
@@ -161,7 +161,7 @@ def main():
     ppm_now = int(rx.get("ppm") or 0)
     unit = f"acars-decoder@{args.receiver}.service"
 
-    print(f"=== calibrating '{args.receiver}' (dongle {rx.get('device')}, ppm now {ppm_now}) ===")
+    print(f"=== calibrating '{args.receiver}' (radio {rx.get('device')}, ppm now {ppm_now}) ===")
     print(f"  listening on {len(freqs)} VDL2 channel(s) "
           f"{min(freqs)}-{max(freqs)} MHz for {args.secs}s via dumpvdl2")
     print(f"  stopping {unit} - this band is off the air until it finishes")
@@ -170,8 +170,8 @@ def main():
     if not stopped:
         print(f"  ! could not stop {unit}; it may fight for the dongle", file=sys.stderr)
     try:
-        samples, frames, weak = collect(binary, rx.get("device"), rx.get("gain", 40),
-                                        ppm_now, freqs, args.port, args.secs, args.verbose)
+        samples, frames, weak = collect(binary, args.receiver, {**rx, "ppm": ppm_now},
+                                        freqs, args.port, args.secs, args.verbose)
     finally:
         print(f"  restarting {unit}...")
         ok = systemctl("start", unit)

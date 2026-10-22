@@ -80,10 +80,13 @@ making it both a licensing win and a material reception improvement. See
 - **acarsdec cannot replay wideband IQ**, so an identical-input comparison is not
   possible. `soundfile.c` maps each *audio* channel to one ACARS channel and calls
   `demodMSK` directly, with no frequency translation. Hence the time-sliced A/B.
-- **SoapySDR ABI split** on this machine: `/usr/local` (ABI 0.8-3, airspy +
-  sdrplay) versus the distro's (ABI 0.8, rtlsdr + miri). xng links the distro one,
-  so `driver=sdrplay` fails an ABI check and `driver=miri` segfaults at 2.5 MS/s.
-  The RSP1A is effectively unusable with xng.
+- **SoapySDR ABI split** on the Pi: `/usr/local` (ABI 0.8-3, airspy + sdrplay)
+  versus the distro's (ABI 0.8, rtlsdr + miri). xng links the distro one, so
+  `driver=sdrplay` failed an ABI check and `driver=miri` segfaults at 2.5 MS/s.
+  On the CN62 the SoapySDRPlay3 module is built against the distro SoapySDR and
+  loads cleanly (`SoapySDRUtil --info` lists it at ABI 0.8), and `receiver.py`
+  now supports `"sdr": "sdrplay"` for all three decoders (October 2026). The
+  remaining RSP caveat is the 1.536 MHz IF filter below 5 MS/s; see the README.
 - **`ps -eo pcpu` is a lifetime average, not current load.** It reported a stuck
   process at 86% that was actually consuming 140%. Sample `/proc/pid/stat` deltas.
 - **`install.sh:57` clones acarsdec unpinned.** Two installs a week apart get
