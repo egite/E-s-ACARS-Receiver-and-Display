@@ -847,15 +847,26 @@ def weather_samples(text):
                     "temp": _signed(sg, tv, tenths), "wdir": int(wd), "wspd": int(ws)}
                    for la, lo, t, alt, sg, tv, wd, ws in rows]
         return m.group(1), m.group(2), samples
-    # Alaska E330: E330KSEAKDEN then N40591W106515 0535 3033 M034 248023 G0009; continuation rows carry no time
-    m = re.match(r"E\d{3}(" + ICAO_AP + ")(" + ICAO_AP + r")N\d{5}W", text)
+    # Alaska E330: E330KSEAKDEN then N40591W106515 0535 3033 M034 248023 G0009; continuation rows carry no time.
+    # UPS E503: the same rows after IATA codes with spaces ("E503SLC SDF "), split by line breaks mid-row
+    # (altitude within 300 ft of ADS-B at FL390, wind 289/51 against a 499 kt eastbound ground speed).
+    m = re.match(r"E\d{3}(?:(" + ICAO_AP + ")(" + ICAO_AP + r")|([A-Z]{3}) ([A-Z]{3}) )N\d{5}W", text)
     if m:
         samples, t = [], ""
-        for la, lo, when, alt, sg, tv, wd, ws in re.findall(r"N(\d{5})W(\d{6})(\d{4})?(\d{4})([MP])(\d{3})(\d{3})(\d{3})G", text):
+        for la, lo, when, alt, sg, tv, wd, ws in re.findall(r"N(\d{5})W(\d{6})(\d{4})?(\d{4})([MP])(\d{3})(\d{3})(\d{3})G",
+                                                             re.sub(r"[\r\n]", "", text)):
             t = when or t
             samples.append({"lat": int(la) / 1000, "lon": -int(lo) / 1000, "time": t, "alt": int(alt) * 10,
-                            "temp": _signed(sg, tv), "wdir": int(wd), "wspd": int(ws)})
-        return m.group(1), m.group(2), samples
+                            "temp": _signed(sg, tv, tenths=bool(m.group(3))), "wdir": int(wd), "wspd": int(ws)})  # UPS: M567 is -56.7
+        return m.group(1) or m.group(3), m.group(2) or m.group(4), samples
+    # American A3E: A3E6 DDHHMM DEN ORD then N40285W104237 2876 M315 239058 G0009 ... - the D3B/D3M rows
+    # (altitude in tens of feet, temperature in tenths) without a time each; the header's is used.
+    m = re.match(r"A3E\d\d\d(\d{4})([A-Z]{3}) ([A-Z]{3}) N\d{5}W", text)
+    if m:
+        rows = re.findall(r"N(\d{5})W(\d{6})(\d{4})([MP])(\d{3})(\d{3})(\d{3})G", re.sub(r"[\r\n]", "", text))
+        samples = [{"lat": int(la) / 1000, "lon": -int(lo) / 1000, "time": m.group(1), "alt": int(alt) * 10,
+                    "temp": _signed(sg, tv, True), "wdir": int(wd), "wspd": int(ws)} for la, lo, alt, sg, tv, wd, ws in rows]
+        return m.group(2), m.group(3), samples
     # Northwest *WXR: N40301W107444 0910 371 -505 197 048 00 (flight level, temperature in tenths); no route
     if text.startswith("*WXR"):
         rows = re.findall(r"N(\d{5})W(\d{6})(\d{4})(\d{3})([-+ ]\d{3})(\d{3})(\d{3})", text)
@@ -1149,6 +1160,117 @@ def translate_crzn(text):
     return result("data", summary, details, position=position)
 
 
+def translate_crz(text):
+    """United CRZnn cruise reports in the layouts translate_crzn doesn't know: a route-and-time
+    header "CRZ01 14448 2201 KDENKJAC 110126 0137 ...", and the decimal one
+    "CRZ10N638... KBW IKD 1110 1414 ...  -8.0-37.3 320020.787..." with total and static air
+    temperature, altitude and Mach (its route columns are mangled, so they are not read)."""
+    flat = re.sub(r"#DFB|[\r\n]", "", text)
+    m = re.match(r"CRZ(\d\d)\d{9}(" + ICAO_AP + ")(" + ICAO_AP + r")(\d{6})(\d\d)(\d\d)", flat)
+    if m and airports.city(m[2]) and airports.city(m[3]):
+        return result("data", f"Cruise performance report (CRZ{m[1]})",
+                      [f"Flight {m[2]} → {m[3]}", f"Recorded {m[5]}:{m[6]} UTC"])
+    m = re.match(r"CRZ(\d\d)N\d{3,5}[A-Z]{0,2}\d*\s+\d*[A-Z]{3} [A-Z]{3} \d{4}(\d\d)(\d\d)\d*\s+(-?\d+\.\d)(-?\d+\.\d) (\d{5})(0\.\d{3})", flat)
+    if m:
+        return result("data", f"Cruise performance report (CRZ{m[1]}), {int(m[6]):,} ft, Mach {float(m[7]):.3f}",
+                      [f"Outside air {float(m[5]):.1f}°C (total {float(m[4]):.1f}°C)", f"Recorded {m[2]}:{m[3]} UTC"])
+    return None
+
+
+UNITED_PHASES = {"ER": "en route", "DC": "descent", "CL": "climb", "TO": "takeoff", "PO": "power-on", "CR": "cruise"}
+
+
+def translate_united_engine(text):
+    """United's engine reports, which carry the flight and route in a header:
+
+      <370>FEG / 9  N38950UAL1141   KSFOKEWR011126085940 106ER415104 13 /  270022953735  -24 40769-105596  820BSM...
+        a report type in angle brackets, tail and flight, route, date DDMMYY, time, a phase, then a
+        line with the flight level, a temperature, the position (three decimals) and what looks
+        like a vertical speed: here 40.77N 105.60W at 08:59:40 with the aircraft at 40.86N
+        104.90W four minutes later, east-bound.
+      /ILNGE7X.CLB006UA N249732UAL2303   261101065402KLAXKEWR-112060...
+        a climb (CLB) or cruise (SCR) report with the same identity fields and a date YYMMDD.
+      BLDN19136300909042611 1685 -23.50 -50.5  370060.778 150 ... KSFOKEWR ...
+        total and static air temperature, flight level and Mach, then engine columns.
+      A53A / N9025R 30090518  67 272 / 36077KSJCKMDWESBSM23-H200-0005 ...
+        tail, date and route, then engine columns.
+    Only the identity, time, phase and the readable numbers are taken."""
+    body = re.sub(r"^/[A-Z0-9]{7}\.", "", text)
+    m = re.match(r"<(\d{3})>([A-Z])EG\s*\d*\s*(N\d{3,5}[A-Z]{0,2})(UAL\d+)\s+(?:(" + ICAO_AP + ")(" + ICAO_AP + r")(\d{6})(\d{6})\s*\d*([A-Z]{2})?)?", body)
+    if m:
+        phase = UNITED_PHASES.get(m[9] or "")
+        details = [f"Flight {m[4]} ({m[3]})" + (f", {m[5]} → {m[6]}" if m[5] else "")]
+        position = None
+        if m[8]:
+            details.append(f"Generated {hhmmss(m[8])}")
+        line = re.search(r"\n ?(\d{3})\d{9}\s+(-?\d+)\s+(\d{5})(-\d{6})", body)
+        if line:
+            lat, lon = int(line[3]) / 1000, int(line[4]) / 1000
+            details += [f"FL{int(line[1])}, {latlon(lat, lon)}"]
+            position = {"lat": lat, "lon": lon, "src": "United engine report"}
+        return result("data", f"Engine report <{m[1]}>{m[2]}" + (f", {phase}" if phase else ""), details, position=position)
+    m = re.match(r"(CLB|SCR)(\d{3})UA (N\d{3,5}[A-Z]{0,2})\d?(UAL\d+)\s+(\d{6})(\d{6})(" + ICAO_AP + ")(" + ICAO_AP + ")", body)
+    if m:
+        kind = "climb" if m[1] == "CLB" else "cruise"
+        return result("data", f"Engine {kind} report ({m[1]}{m[2]})",
+                      [f"Flight {m[4]} ({m[3]}), {m[7]} → {m[8]}", f"Generated {hhmmss(m[6])}"])
+    m = re.match(r"BLDN(\d\d).*?(-?\d+\.\d\d) +(-?\d+\.\d) +(\d{3})\d\d(0\.\d{3})", text, re.S)
+    if m:
+        return result("data", f"Engine cruise report (BLDN{m[1]}), FL{int(m[4])}, Mach {float(m[5]):.3f}",
+                      [glued_route(text), f"Outside air {float(m[3]):.1f}°C (total {float(m[2]):.1f}°C)"])
+    m = re.match(r"(A5\dA)\r?\n(?:[^\r\n]*\r?\n)?.*?(N\d{3,5}[A-Z]{0,2})", text, re.S)
+    if m and "BSM" in text:
+        return result("data", f"Engine monitoring report {m[1]}", [glued_route(text), f"Aircraft {m[2]}"])
+    return None
+
+
+def glued_route(text):
+    """'Flight KSFO → KEWR' from a route run into its neighbours ("...000KSFOKEWR1000", "36077KSJCKMDWES"),
+    taking only a pair that are both airports we know."""
+    for a, b in re.findall(r"(?<![A-Z])([KCPM][A-Z]{3})([KCPM][A-Z]{3})", text):
+        if airports.city(a) and airports.city(b):
+            return f"Flight {a} → {b}"
+    return None
+
+
+def translate_ups_eda(text):
+    """UPS engine data report: EDA/E112UP08431N387UP  11/0704:05:03N40.51W106.61... - flight, tail,
+    date, time and position (two decimals: 7 minutes and 85 km before the ADS-B fix, so it is
+    the report's own moment, not the aircraft now)."""
+    m = re.match(r"EDA/E\d{3}UP(\d{4})\d(N\d{3,5}[A-Z]{0,2})\s+(\d\d)/(\d\d)(\d\d):(\d\d):(\d\d)([NS])(\d+\.\d\d)([EW])(\d+\.\d\d)", text)
+    if not m:
+        return None
+    lat = float(m[9]) * (-1 if m[8] == "S" else 1)
+    lon = float(m[11]) * (-1 if m[10] == "W" else 1)
+    return result("data", f"Engine data report (EDA), flight UP{m[1]}",
+                  [f"Aircraft {m[2]}", f"Generated {m[5]}:{m[6]}:{m[7]} UTC on {m[4]}/{m[3]}", latlon(lat, lon)],
+                  position={"lat": lat, "lon": lon, "src": "UPS EDA report"})
+
+
+def translate_named_report(text):
+    """Reports whose name is all that is readable, and the OK replies to company uplinks."""
+    m = re.match(r"(?:#[A-Z0-9]{2}B)?/([A-Z0-9]{5})([A-Z]{2})\.OK\b\s*(.*)", text, re.S)
+    if m:
+        lines = [l.strip() for l in m[3].splitlines() if l.strip()]
+        return result("data", "Aircraft answered a company uplink: OK", [f"“{' / '.join(lines)}”" if lines else None,
+                                                                          f"Ground address {m[1]}{m[2]}"])
+    m = re.search(r"RPT(\d\d) PG(\d) +([A-Z]-?[A-Z ]+?) REAL.*?\n B (N\w+) (\d\d[A-Z]{3}\d\d) (\d{4}) (\w+) +(" + ICAO_AP + ")/(" + ICAO_AP + ")", text, re.S)
+    if m:
+        return result("data", f"{m[3].strip().capitalize()} report (RPT{m[1]}, page {m[2]})",
+                      [f"Flight {m[7]} ({m[4]}), {m[8]} → {m[9]}", f"Generated {m[6][:2]}:{m[6][2:]} UTC"])
+    m = re.match(r"RPT(\d\d);PG(\d);(REAL|SNAP)", text)
+    if m:
+        return result("data", f"Aircraft system report RPT{m[1]} (page {m[2]})")
+    m = re.match(r"R(\d\d)/(N\w{3,5})\d\d[A-Z]{3}\d{6}", text)
+    if m:
+        return result("data", f"Aircraft monitoring report R{m[1]}", [f"Aircraft {m[2]}"])
+    if re.match(r"ELE'+\d", text):
+        route = re.search(r"\d([A-Z]{3})([A-Z]{3})\d", text)
+        return result("data", "Engine takeoff report (ELE)" if "TOFF" in text else "Engine report (ELE)",
+                      [f"Flight {route[1]} → {route[2]}" if route and airports.city_iata(route[1]) else None])
+    return None
+
+
 # Delta's FD report: tail, date and time, flight (plus one digit), route and phase, then
 # rows of an eight-character code and two times:
 #
@@ -1291,7 +1413,8 @@ def _translate_monitoring(msg):
     tagged = translate_tagged_weather(text)
     if tagged:
         return tagged
-    for reader in (translate_hydn, translate_pnm4, translate_delta_apm, translate_a86, translate_takeoff, translate_fd, translate_crzn):
+    for reader in (translate_hydn, translate_pnm4, translate_delta_apm, translate_a86, translate_takeoff, translate_fd, translate_crzn,
+                   translate_crz, translate_united_engine, translate_ups_eda, translate_named_report):
         report = reader(text)
         if report:
             return report
@@ -1342,11 +1465,12 @@ def _translate_monitoring(msg):
         return result("data", name + (f", {phase_name}" if phase_name else ""), details)
     if re.match(r"A[23]\d\d,\d{6},\d,\d,TB\d+/", text):
         return result("data", "Airbus aircraft monitoring report", [route_detail])
-    m = re.match(r"(\d{3})[A-Z0-9]{0,6}?N\d{1,4}[A-Z]{1,2}(?=\d|\s)", text)  # report no., then tail (N775DE)
-    glued = re.findall(r"([KCPM][A-Z]{3})([KCPM][A-Z]{3})(?![A-Z])", text)  # route codes can follow other letters
+    # Report number, then the tail (N775DE, or Delta's all-digit N37532); "072A8115.N37533" is the
+    # same with a configuration code between.
+    m = re.match(r"(\d{3})(?:A\d{4}\.?|[A-Z0-9]{0,6}?)N\d{1,5}[A-Z]{0,2}(?=\d|\s)", text)
     if m:
-        orig, dest = route or (glued[-1] if glued else (None, None))
-        return result("data", f"Aircraft monitoring report {int(m.group(1))}", [f"Flight {orig} → {dest}" if orig else None])
+        return result("data", f"Aircraft monitoring report {int(m.group(1))}",
+                      [f"Flight {route[0]} → {route[1]}" if route else glued_route(text)])
     # ACMS report with header A02/A32002,1,1/CC<tail>,SEP14,150905,KDTW,KDEN
     m = re.match(r"(A\d\d)/A\d{5},\d,\d/C(?:C|1N)\w+,[A-Z]{3}\d\d,(\d{6}),(" + ICAO_AP + "),(" + ICAO_AP + ")", text)
     if m:
@@ -2111,6 +2235,7 @@ def translate(msg, raw=None):
         # The sublabel can sit inline ("#M1B/HDQDLUA.RESREQ", "#M1B/.POS"), which hid these from
         # every pattern below.
         text = re.sub(r"^(?:- ?)?#M\dB/?(?=[A-Z0-9]{7}\.|\.)\.?", "", text)
+        text = re.sub(r"^/\.", "", text)  # "/.POS/TS..." and "/.RESREQ/..." carry no header at all
         # "POS/TS065719,300926N41040W105051,,065719,410,CYS,..." is the POSN report behind a
         # timestamp: the same fields in the same order.
         stamped = re.match(r"POS/TS\d{6},\d{6}([NS]\d{5}[EW]\d{6},.*)", text)

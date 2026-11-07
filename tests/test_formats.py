@@ -294,3 +294,57 @@ def test_frequency_change_uplink_and_low_level_report_239():
     low = translate.translate({"label": "H1", "sublabel": "DF", "flight": "DL1", "kind": "acars",
                                "text": "239N37530751 93026175735296 3988-10461 60 19 14310  6AA-528 27720 \r\n176 1990067 8313       KDENKLGA"})
     assert "FL60" in low["details"] and "Wind 310° at 6 kt" in low["details"] and low["position"]["lat"] == 39.88
+
+
+def test_more_weather_rows_ups_and_american():
+    ups = {"label": "H1", "sublabel": "DF", "flight": "UP2843", "kind": "acars", "ts": 1793842303,
+           "text": "E503SLC SDF N40327W10726412573901M567289051G1961N40324W10651813013\r\n901M552294057G1841N40327W10617813043900M542294052G1771"}
+    r = translate.translate(ups)
+    assert r["details"] == ["Flight SLC Salt Lake City → SDF Louisville",
+                            "Latest 13:04 UTC: 39,000 ft, -54°C, wind 294° at 52 kt, at 40.33°N 106.18°W"]
+    assert [o["temp"] for o in translate.observations(ups)] == [-56.7, -55.2, -54.2]
+    aa = {"label": "H1", "sublabel": "DF", "flight": "AA317", "kind": "acars", "ts": 1793842303,
+          "text": "A3E6011621DEN ORD N40285W1042372876M315239058G0009N40302W104210292\r\n3M327239061G0009N40320W1041822989M345240065G0009A2011"}
+    r = translate.translate(aa)
+    assert r["summary"] == "Weather observations (3 samples, climbing 28,760 → 29,890 ft)"
+    assert "Latest 16:21 UTC: 29,890 ft, -34°C, wind 240° at 65 kt" in r["details"][1]
+
+
+def test_united_engine_reports():
+    r = translate.translate({"label": "H1", "sublabel": "DF", "flight": "UA1141", "kind": "acars",
+                             "text": "<370>FEG\r\n9  N38950UAL1141   KSFOKEWR011126085940 106ER415104 13\r\n 270022953735  -24 40769-105596  820BSM5B70000022 7166\r\n1NORM AUTO\r\n"})
+    assert r["summary"] == "Engine report <370>F, en route"
+    assert r["details"] == ["Flight UAL1141 (N38950), KSFO San Francisco → KEWR Newark", "Generated 08:59:40 UTC", "FL270, 40.77°N 105.60°W"]
+    assert r["position"] == {"lat": 40.769, "lon": -105.596, "src": "United engine report"}
+    clb = translate.translate({"label": "H1", "sublabel": "T6", "flight": "UA2303", "kind": "acars",
+                               "text": "/ILNGE7X.CLB006UA N249732UAL2303   261101065402KLAXKEWR-112060274319486000013000022447M85P04"})
+    assert clb["summary"] == "Engine climb report (CLB006)" and clb["details"][1] == "Generated 06:54:02 UTC"
+    bldn = translate.translate({"label": "H1", "sublabel": "DF", "flight": "UA1", "kind": "acars",
+                                "text": "BLDN19136300909042611 1685 -23.50 -50.5  370060.778 150 2120002416\r\n        1CRS 065R9 000000000000KSFOKEWR1000 86.75"})
+    assert bldn["summary"] == "Engine cruise report (BLDN19), FL370, Mach 0.778" and bldn["details"][0] == "Flight KSFO San Francisco → KEWR Newark"
+    crz = translate.translate({"label": "H1", "sublabel": "DF", "flight": "UA2201", "kind": "acars",
+                               "text": "CRZ01144482201KDENKJAC1101260137061280\r\n297785030015N126111960N41200000N0045N0000000N000000400000905210473.\r\n1234"})
+    assert crz["summary"] == "Cruise performance report (CRZ01)" and crz["details"] == ["Flight KDEN Denver → KJAC Jackson", "Recorded 01:37 UTC"]
+    crz10 = translate.translate({"label": "H1", "sublabel": "DF", "flight": "UA1", "kind": "acars",
+                                 "text": "CRZ10N6381456  73KBW IKD 111014143197  -8.0-37.3 320020.7871649202\r\n4121SCR2A85 0986"})
+    assert crz10["summary"] == "Cruise performance report (CRZ10), 32,002 ft, Mach 0.787"
+
+
+def test_ups_eda_ok_replies_and_named_reports():
+    eda = translate.translate({"label": "H1", "sublabel": "DF", "flight": "UP843", "kind": "acars",
+                               "text": "EDA/E112UP08431N387UP  11/0704:05:03N40.51W106.6128703733700225978\r\n006-252-533000004606260541050061606008980947"})
+    assert eda["summary"] == "Engine data report (EDA), flight UP0843" and eda["position"] == {"lat": 40.51, "lon": -106.61, "src": "UPS EDA report"}
+    ok = translate.translate({"label": "H1", "flight": "UA1", "kind": "acars", "text": "#DFB/NDCULUA.OK\r\nXCM 90 GWMAX800 146300\r\nAL"})
+    assert ok["summary"] == "Aircraft answered a company uplink: OK" and ok["details"][0] == "“XCM 90 GWMAX800 146300 / AL”"
+    atlas = translate.translate({"label": "H1", "flight": "5Y4605", "kind": "acars",
+                                 "text": "#CFB/BLVBOCR.\r\n\n\n\n A RPT12 PG1  R-ECS AIR COND SYS REAL\r\n B N445MC 30SEP26 1537 GTI4605 KCVG/KPDX 685-2270-012 PW-508 ER\r\n\r\n 1   19  17"})
+    assert atlas["summary"] == "R-ecs air cond sys report (RPT12, page 1)"
+    assert atlas["details"] == ["Flight GTI4605 (N445MC), KCVG Cincinnati / Covington → KPDX Portland", "Generated 15:37 UTC"]
+    pos = translate.translate({"label": "H1", "sublabel": "M1", "flight": "ZD1", "kind": "acars",
+                               "text": "/.POS/TS172331,300926N38594W104213,,172331,301,,172331,,M32,13522,66,82045AF"})
+    assert pos["summary"].startswith("Position report: over 38.99°N 104.36°W at 17:23:31 UTC")
+    delta = translate.translate({"label": "H1", "sublabel": "DF", "flight": "DL1", "kind": "acars",
+                                 "text": "072A8115.N3753300917581171123507511KDENKLGACLMB  60156160  18.8  1\r\n0.0  78482290.3998"})
+    assert delta["summary"] == "Aircraft monitoring report 72" and delta["details"] == ["Flight KDEN Denver → KLGA New York"]
+    assert translate.translate({"label": "H1", "sublabel": "DF", "flight": "DL1", "kind": "acars",
+                                "text": "221N3753247710 526183859150256369791-26-53  5 905 906685693 2823 2\r\n883 927"})["summary"] == "Aircraft monitoring report 221"
