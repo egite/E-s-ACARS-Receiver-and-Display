@@ -192,17 +192,33 @@ function renderBreakdowns(data) {
   bindTips(els.types);
 }
 
+function fmtLatLon(lat, lon) {
+  return `${Math.abs(lat).toFixed(2)}°${lat >= 0 ? "N" : "S"} ${Math.abs(lon).toFixed(2)}°${lon >= 0 ? "E" : "W"}`;
+}
+
+// Where a VDL2 station is: what it said about itself in a GSIF, or a guess from the
+// low-flying aircraft that use it (they are at the airport it serves).
+function fmtSite(g) {
+  const s = g.site;
+  if (!s) return `<span class="muted">${g.fixes ? `${num(g.fixes)} low fixes, need 20` : "—"}</span>`;
+  const where = s.airport ? `<b>${esc(s.airport)}</b> <span class="muted">${fmtLatLon(s.lat, s.lon)}</span>` : fmtLatLon(s.lat, s.lon);
+  const how = s.from === "GSIF" ? "said so" : `≈ from ${num(s.fixes)} aircraft`;
+  return `${where} <span class="muted small">${how}</span>`;
+}
+
 function renderStations(gs) {
   const located = gs.located.length ? `<table class="data-table"><thead><tr><th>Station</th><th>Network</th><th>Location</th><th>VDL2</th><th>Heard</th></tr></thead><tbody>
-    ${gs.located.map((s) => `<tr><td><b>${esc(s.id)}</b> <span class="muted">${esc(s.iata)}</span></td><td>${esc(s.network)}</td>
-      <td>${Math.abs(s.lat).toFixed(2)}°${s.lat >= 0 ? "N" : "S"} ${Math.abs(s.lon).toFixed(2)}°${s.lon >= 0 ? "E" : "W"}</td>
+    ${gs.located.map((s) => `<tr><td><b>${esc(s.id)}</b> <span class="muted">${esc(s.iata || s.icao || "")}</span>
+      <span class="muted small">${s.via === "GSIF" ? "VDL2 GSIF" : "ACARS squitter"}</span></td><td>${esc(s.network)}</td>
+      <td>${fmtLatLon(s.lat, s.lon)}</td>
       <td>${s.vdl_freq ? s.vdl_freq.toFixed(3) : "—"}</td><td>${num(s.count)}× · ${fmtAgo(s.last_seen)}</td></tr>`).join("")}</tbody></table>`
-    : `<div class="muted small">No ground station squitters heard yet. Ground stations broadcast their location occasionally; they appear here and on the map when heard.</div>`;
+    : `<div class="muted small">No ground station broadcasts heard yet. Stations announce their location occasionally (ACARS squitters, VDL2 GSIF frames); they appear here and on the map when heard.</div>`;
   const vdl = gs.vdl2.slice(0, 12);
-  const addrs = vdl.length ? `<table class="data-table"><thead><tr><th>VDL2 station address</th><th>Frames</th><th>Aircraft</th><th>Last</th></tr></thead><tbody>
-    ${vdl.map((g) => `<tr><td class="mono">${esc(g.address)}</td><td>${num(g.frames)}</td><td>${num(g.aircraft)}</td><td>${fmtAgo(g.last_seen)}</td></tr>`).join("")}
+  const addrs = vdl.length ? `<table class="data-table"><thead><tr><th>VDL2 station</th><th>Network</th><th>Site</th><th>Frames</th><th>Aircraft</th><th>Last</th></tr></thead><tbody>
+    ${vdl.map((g) => `<tr><td class="mono">${esc(g.address)}</td><td>${esc(g.network || "")}</td><td>${fmtSite(g)}</td>
+      <td>${num(g.frames)}</td><td>${num(g.aircraft)}</td><td>${fmtAgo(g.last_seen)}</td></tr>`).join("")}
     </tbody></table>${gs.vdl2.length > vdl.length ? `<div class="muted small">…and ${num(gs.vdl2.length - vdl.length)} more</div>` : ""}` : "";
-  els.stations.innerHTML = `<h4 class="sub-title">Located (from squitters)</h4>${located}
+  els.stations.innerHTML = `<h4 class="sub-title">Located (stations announcing their position)</h4>${located}
     <h4 class="sub-title">VDL2 stations aircraft are talking to</h4>${addrs || `<div class="muted small">None yet.</div>`}`;
 }
 
@@ -229,7 +245,7 @@ function renderServer(s, store, archive) {
   if (archive && archive.enabled) {
     arch = tile("Archive", archive.failed ? "failed" : size(archive.bytes),
       archive.failed ? "write error, see the log"
-        : `${num(archive.written)} written · ${archive.days}/${archive.retention_days} days on disk`);
+        : `${num(archive.written)} written${archive.replayed ? ` · ${num(archive.replayed)} reloaded at start` : ""} · ${archive.days}/${archive.retention_days} days on disk`);
   }
   els.server.innerHTML = tile("Memory", s.memory_mb != null ? `${s.memory_mb} MB` : "—", "web server process") +
     held + arch +

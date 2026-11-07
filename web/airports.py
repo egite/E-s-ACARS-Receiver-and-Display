@@ -8,14 +8,16 @@ never decodes a route never pays for the table: 2.4 MB of JSON becomes a 30,000-
 mapping costing about 17 MB of RSS, which is why it is not loaded at import.
 """
 import json
+import math
 from pathlib import Path
 
 PATH = Path(__file__).resolve().parent / "airports.json"
-_city = _iata = None
+_city = _iata = _served = None
+SCHEDULED_RANK = 5  # rows ranked 5+ have scheduled airline service: the fields datalink stations serve
 
 
 def _load():
-    global _city, _iata
+    global _city, _iata, _served
     if _city is None:
         rows = json.loads(PATH.read_text())
         _city = {a[0]: a[3] for a in rows if a[3]}
@@ -23,6 +25,19 @@ def _load():
         _iata = {}
         for a in sorted((a for a in rows if a[1] and a[3]), key=lambda a: a[6]):
             _iata[a[1]] = a[3]
+        _served = [(a[4], a[5], a[0]) for a in rows if a[6] >= SCHEDULED_RANK and a[4] is not None]
+
+
+def nearest(lat, lon, max_km):
+    """The ICAO code of the closest airport with airline service within max_km, or None."""
+    _load()
+    best, best_d = None, max_km
+    cos = math.cos(math.radians(lat))
+    for alat, alon, code in _served:
+        d = 111.2 * math.hypot(alat - lat, (alon - lon) * cos)
+        if d < best_d:
+            best, best_d = code, d
+    return best
 
 
 def city(code):

@@ -9,7 +9,9 @@ import time
 from collections import Counter, deque
 from pathlib import Path
 
+import airports
 from airlines import airline_name
+from translate import parse_squitter
 
 log = logging.getLogger("acarsweb")
 
@@ -248,35 +250,91 @@ class HealthMonitor:
         return True
 
 
+# VDL2 ground station addresses are handed out in blocks per service provider; the
+# first digit says whose block (airframes.io's station lists follow the same split).
+VDL2_NETWORKS = {"1": "ARINC", "2": "SITA"}
+SITE_FIXES = 300        # low-altitude aircraft positions remembered per VDL2 station
+SITE_MIN_FIXES = 20     # below this the estimate is noise
+SITE_MAX_ALT_FT = 12000  # aircraft this low talk to a station close to them
+
+
+def vdl2_network(address):
+    return VDL2_NETWORKS.get((address or "")[:1], "Other")
+
+
+def station_broadcast(msg):
+    """What a ground station said about itself, if the message was one doing so: an ACARS
+    squitter, or a VDL2 Ground Station Information Frame carrying the station's location.
+    Returns a station record (id, network, lat, lon, ...) or None."""
+    if msg.get("label") == "SQ":
+        s = parse_squitter(msg.get("text"))
+        return dict(s, via="squitter") if s else None
+    pos = msg.get("gs_position")
+    if pos and msg.get("gs"):
+        return {"id": msg["gs"], "network": vdl2_network(msg["gs"]), "iata": None, "icao": msg.get("gs_airport"),
+                "lat": pos["lat"], "lon": pos["lon"], "vdl_freq": msg.get("freq"), "via": "GSIF"}
+    return None
+
+
 class GroundStations:
-    """Ground stations: located ones from squitter broadcasts, plus VDL2 station addresses aircraft talk to."""
+    """Ground stations: located ones, from ACARS squitters and VDL2 GSIF frames, plus the
+    VDL2 station addresses aircraft talk to. A VDL2 station we never hear ourselves is still
+    placed roughly, from where the low-flying aircraft that use it are."""
 
     def __init__(self):
-        self.squitters = {}  # id -> station info + last_seen, count
-        self.vdl2 = {}       # address -> {last_seen, frames, aircraft:set}
+        self.located = {}  # (id, lat, lon) -> station info + last_seen, count
+        self.vdl2 = {}     # address -> {last_seen, frames, aircraft:set, fixes:deque}
 
-    def note(self, msg, squitter):
+    def note(self, msg, station, fix=None):
+        """station is what station_broadcast made of the message; fix is the VRS record of
+        the aircraft that sent it, if ADS-B has one."""
         now = msg["ts"]
-        if squitter:
-            s = self.squitters.setdefault(squitter["id"], {**squitter, "count": 0, "first_seen": now})
-            s.update(squitter, last_seen=now, count=s["count"] + 1)
+        if station:
+            # Keyed by place as well as name: two SITA transmitters at Denver both call
+            # themselves KDEN0 and sit a mile apart.
+            key = (station["id"], station["lat"], station["lon"])
+            s = self.located.setdefault(key, {**station, "count": 0, "first_seen": now})
+            s.update(station, last_seen=now, count=s["count"] + 1)
         if msg["source"] == "VDL2" and msg.get("gs"):
-            g = self.vdl2.setdefault(msg["gs"], {"address": msg["gs"], "frames": 0, "aircraft": set(), "first_seen": now})
+            g = self.vdl2.setdefault(msg["gs"], {"address": msg["gs"], "network": vdl2_network(msg["gs"]),
+                                                 "frames": 0, "aircraft": set(), "fixes": deque(maxlen=SITE_FIXES),
+                                                 "first_seen": now})
             g["frames"] += 1
             g["last_seen"] = now
             if msg.get("icao"):
                 g["aircraft"].add(msg["icao"])
+            if fix and fix.get("Lat") is not None and fix.get("Long") is not None:
+                alt = fix.get("GAlt") if fix.get("GAlt") is not None else fix.get("Alt")
+                if fix.get("Gnd") or (alt is not None and alt < SITE_MAX_ALT_FT):
+                    g["fixes"].append((fix["Lat"], fix["Long"]))
 
     def expire(self, cutoff):
-        for table in (self.squitters, self.vdl2):
+        for table in (self.located, self.vdl2):
             for key in [k for k, v in table.items() if v["last_seen"] < cutoff]:
                 del table[key]
 
+    @staticmethod
+    def _site(g, located_by_id):
+        """Where a VDL2 station is: what it said in a GSIF if we heard one, else the median
+        position of the low-flying aircraft using it, which sits on the airport it serves."""
+        own = located_by_id.get(g["address"])
+        if own:
+            return {"lat": own["lat"], "lon": own["lon"], "airport": own.get("icao"), "from": "GSIF"}
+        if len(g["fixes"]) < SITE_MIN_FIXES:
+            return None
+        lat = statistics.median(f[0] for f in g["fixes"])
+        lon = statistics.median(f[1] for f in g["fixes"])
+        near = airports.nearest(lat, lon, 15)
+        return {"lat": round(lat, 3), "lon": round(lon, 3), "airport": near, "fixes": len(g["fixes"]),
+                "from": "aircraft"}
+
     def report(self):
+        located = sorted(self.located.values(), key=lambda s: -s["last_seen"])
+        by_id = {s["id"]: s for s in located if s.get("via") == "GSIF"}
         return {
-            "located": sorted(self.squitters.values(), key=lambda s: -s["last_seen"]),
-            "vdl2": sorted(({**g, "aircraft": len(g["aircraft"])} for g in self.vdl2.values()),
-                           key=lambda g: -g["frames"]),
+            "located": located,
+            "vdl2": sorted(({**g, "aircraft": len(g["aircraft"]), "fixes": len(g["fixes"]), "site": self._site(g, by_id)}
+                            for g in self.vdl2.values()), key=lambda g: -g["frames"]),
         }
 
 

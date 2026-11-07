@@ -24,9 +24,9 @@ import airports
 import settings
 from airlines import IATA_TO_ICAO
 from aircraft_db import AircraftDB
-from blocks import BlockAssembler
-from monitor import GroundStations, HealthMonitor, WeatherStore, process_memory_mb, stats_summary
-from translate import MESSAGE_TYPES, message_type, observations, parse_squitter, translate
+from blocks import BLOCK_WINDOW_SECS, BlockAssembler
+from monitor import GroundStations, HealthMonitor, WeatherStore, process_memory_mb, station_broadcast, stats_summary
+from translate import MESSAGE_TYPES, message_type, observations, translate
 
 HERE = Path(__file__).resolve().parent
 log = logging.getLogger("acarsweb")
@@ -186,7 +186,9 @@ def normalize_acars(d, cfg):
         "icao": None,
         "reg": clean_reg(d.get("tail")),
         "flight": clean_flight(d.get("flight")),
-        "direction": "up" if block_id.isalpha() else "down",
+        # Uplinks carry a letter block id. Ground station squitters carry none at all (and
+        # no tail), but they come from the ground too.
+        "direction": "up" if block_id.isalpha() or label == "SQ" else "down",
         "gs": None,
         "label": label,
         "sublabel": d.get("sublabel"),
@@ -266,12 +268,19 @@ def normalize_vdl2(d, cfg):
         msg["kind"] = "xid"
         msg["text"] = xid.get("type_descr") or xid.get("type") or "XID"
         for p in xid.get("vdl_params") or []:
-            val = p.get("value")
-            if p.get("name") == "ac_location" and isinstance(val, dict) and val.get("loc"):
+            name, val = p.get("name"), p.get("value")
+            if name == "ac_location" and isinstance(val, dict) and val.get("loc"):
                 msg["position"] = {"lat": round(val["loc"]["lat"], 4), "lon": round(val["loc"]["lon"], 4),
                                    "alt": val.get("alt"), "src": "VDL2 XID"}
-            elif p.get("name") == "dst_airport" and val:
+            elif name == "dst_airport" and val:
                 msg["text"] += f" (destination {val})"
+            # A Ground Station Information Frame is the station describing itself: where it
+            # is and which airport it serves. That locates a VDL2 station the way an ACARS
+            # squitter locates an ACARS one.
+            elif name == "gs_location" and isinstance(val, dict) and val.get("lat") is not None:
+                msg["gs_position"] = {"lat": round(val["lat"], 4), "lon": round(val["lon"], 4)}
+            elif name == "nearest_airport_id" and val:
+                msg["gs_airport"] = str(val).strip() or None
     else:
         payload = {k: val for k, val in av.items() if isinstance(val, dict) and val and k not in ("src", "dst")}
         if payload:
@@ -287,23 +296,23 @@ def normalize_vdl2(d, cfg):
 # --------------------------------------------------------------- storage
 
 class Archive:
-    """Append-only JSONL of everything received, one file per UTC day.
+    """Append-only JSONL of everything received, one file per UTC day. Always on.
 
-    The store above is the live view and dies with the process; this is the record that
-    outlives a restart and the retention window. Each line carries the message as decoded
-    plus the aircraft's ADS-B fix at the moment it arrived, which is the part that matters
-    later: an unfamiliar airline format is solvable when you can line its fields up against
-    a position you already know, and guesswork when you cannot.
+    This is the durable copy; the store is the fast one, and is rebuilt from here on start
+    (see ACARSWeb.replay), so a restart no longer empties the page. Each line carries the
+    message as decoded plus the aircraft's ADS-B fix at the moment it arrived, which is the
+    part that matters later: an unfamiliar airline format is solvable when you can line its
+    fields up against a position you already know, and guesswork when you cannot.
     """
 
     def __init__(self, cfg):
         conf = cfg.get("archive") or {}
-        self.enabled = bool(conf.get("enabled"))
         path = Path(conf.get("dir") or "archive/messages")
         self.dir = path if path.is_absolute() else HERE.parent / path
         self.retention_days = max(1, int(conf.get("retention_days") or 7))
         self.handle, self.day, self.unflushed, self.written, self.failed = None, None, 0, 0, False
         self.flushed_at = 0.0
+        self.replayed = 0  # messages rebuilt from here at the last start
 
     def _open(self, day):
         if self.handle:
@@ -315,7 +324,7 @@ class Archive:
 
     def note(self, msg, vrs):
         """vrs is the aircraft's current VRS record, or None when ADS-B hasn't seen it."""
-        if not self.enabled or self.failed:
+        if self.failed:
             return
         try:
             day = datetime.fromtimestamp(msg["ts"], UTC).strftime("%Y-%m-%d")
@@ -340,14 +349,13 @@ class Archive:
     def reload(self, conf):
         """Apply a change from the settings page without a restart. Re-opening on the next
         message is what applies a new directory, and prunes to a shortened retention."""
-        self.enabled = bool(conf.get("enabled"))
         path = Path(conf.get("dir") or "archive/messages")
         self.dir = path if path.is_absolute() else HERE.parent / path
         self.retention_days = max(1, int(conf.get("retention_days") or 7))
         self.failed = False
         self.close()
         self.day = None
-        log.info("archive now %s, keeping %d days", "on" if self.enabled else "off", self.retention_days)
+        log.info("archive now in %s, keeping %d days", self.dir, self.retention_days)
 
     def close(self):
         if self.handle:
@@ -356,12 +364,31 @@ class Archive:
             self.handle = None
 
     def report(self):
-        if not self.enabled:
-            return {"enabled": False}
         files = sorted(self.dir.glob("*.jsonl")) if self.dir.exists() else []
         return {"enabled": True, "failed": self.failed, "dir": str(self.dir), "written": self.written,
-                "days": len(files), "retention_days": self.retention_days,
+                "replayed": self.replayed, "days": len(files), "retention_days": self.retention_days,
                 "bytes": sum(f.stat().st_size for f in files)}
+
+    def records(self, since):
+        """Archived messages from `since` on, oldest first, as written. Files are per UTC
+        day, so only the days that can hold such messages are opened."""
+        if not self.dir.exists():
+            return
+        first_day = datetime.fromtimestamp(since, UTC).strftime("%Y-%m-%d")
+        for path in sorted(self.dir.glob("*.jsonl")):
+            if path.stem < first_day:
+                continue
+            try:
+                with path.open() as fh:
+                    for line in fh:
+                        try:
+                            rec = json.loads(line)
+                        except ValueError:  # a line cut short by a crash or a full disk
+                            continue
+                        if isinstance(rec, dict) and rec.get("ts", 0) >= since:
+                            yield rec
+            except OSError as exc:
+                log.warning("archive: couldn't read %s: %s", path, exc)
 
 
 # What each archived line keeps: enough to re-run translation and cryptanalysis later,
@@ -374,7 +401,26 @@ class Archive:
 # label BA the largest unsolved family on the strength of it. It decodes live, to WILCO.
 ARCHIVE_FIELDS = ("id", "ts", "source", "freq", "level", "noise", "errors", "icao", "reg", "flight",
                   "direction", "gs", "label", "sublabel", "msgno", "text", "decoded", "kind", "type", "icao_src",
-                  "position")
+                  "position", "frame")
+
+# What a message dict holds that an archived line leaves out when it is None or empty.
+MSG_DEFAULTS = {"freq": None, "level": None, "noise": None, "errors": 0, "icao": None, "reg": None, "flight": None,
+                "direction": None, "gs": None, "label": None, "sublabel": None, "msgno": None, "text": "",
+                "decoded": None, "position": None, "icao_src": None, "frame": None}
+
+
+def revive(record):
+    """An archived line as the message the store held: the fields the archive dropped put
+    back, and the English made by today's translator rather than the one that wrote the
+    line, so a translator improvement reaches what is already on screen."""
+    msg = {**MSG_DEFAULTS, **{k: v for k, v in record.items() if k not in ("id", "adsb", "type")}}
+    msg["english"] = translate(msg, None)
+    msg["type"] = message_type(msg)
+    # The frame type that tells VDL2 supervisory frames apart was not archived before
+    # 2026-10-30; for those lines the type written at the time still knows.
+    if msg["type"].endswith(":other") and record.get("type") and msg["frame"] is None:
+        msg["type"] = record["type"]
+    return msg
 
 HOT_HOURS = 48  # messages stay as live dicts this long, then go to compact JSON
 WHOLE_STORE_CACHE_SECS = 30  # how long a pass over every message is reused for
@@ -383,7 +429,8 @@ ROW_BYTES = 112  # a compact entry's stats row: 6-tuple plus its level float
 
 
 class MemoryStore:
-    """Messages from the last history_hours, kept in RAM only (nothing survives a restart).
+    """Messages from the last history_hours, kept in RAM for speed; a restart rebuilds it
+    from the archive (ACARSWeb.replay).
 
     A live message dict measures about 3.2 kB, which is affordable for the couple of days
     the flight cards are really used over but not for a week of traffic - 7 days of dicts
@@ -733,9 +780,17 @@ class ACARSWeb:
         self.health = HealthMonitor(cfg, CONFIG_PATH)
         self.stations = GroundStations()
         self.weather = WeatherStore()
+        self.ready = asyncio.Event()  # set once the store is rebuilt from the archive
+        self.pending = []  # (source, payload) that arrived during the rebuild
+        self.tasks = []
 
     # -- ingest
     def ingest(self, source, payload):
+        if not self.ready.is_set():
+            # The store is being rebuilt from the archive in another thread. Ids and order
+            # matter, so what the receivers send meanwhile waits its turn.
+            self.pending.append((source, payload))
+            return
         try:
             raw = json.loads(payload)
             # Pick the normalizer by payload shape, not by which port it arrived on.
@@ -756,7 +811,7 @@ class ACARSWeb:
             return
         msg["english"] = translate(msg, raw)
         msg["type"] = message_type(msg)
-        squitter = parse_squitter(msg["text"]) if msg["label"] == "SQ" else None
+        squitter = station_broadcast(msg)
         if not msg["position"] and msg["english"].get("position"):
             # Formats whose coordinates only exist once decoded; range-check them as we do
             # for weather observations, so a misread never puts an aircraft across the world.
@@ -777,7 +832,16 @@ class ACARSWeb:
             msg["icao"], src = self.tracker.resolve_icao(msg)
             if msg["icao"]:
                 msg["icao_src"] = src
-        self.archive.note(msg, self.vrs.by_icao.get(msg["icao"]) if msg["icao"] else None)
+        fix = self.vrs.by_icao.get(msg["icao"]) if msg["icao"] else None
+        self.archive.note(msg, fix)
+        self.recent_ts.append((time.time(), source, msg["kind"]))
+        self.health.note(msg, raw)
+        self.file(msg, raw, squitter, obs, fix, live=True)
+
+    def file(self, msg, raw, station, obs, fix, live):
+        """Put a translated message where the pages read it: the store, its flight card, the
+        block assembler, ground stations and wind samples. live=False is the archive replay,
+        which has nobody to tell yet."""
         changed = self.blocks.observe(msg)
         key = self.tracker.add(msg)  # resolves the ICAO address before the message is stored
         self.store.add(msg, raw)
@@ -785,20 +849,51 @@ class ACARSWeb:
             a = self.tracker.aircraft[key]
             a["msg_ids"].append(msg["id"])
             self.tracker.remember(a, msg)
-        self.recent_ts.append((time.time(), source, msg["kind"]))
-        self.health.note(msg, raw)
-        self.stations.note(msg, squitter)
+        self.stations.note(msg, station, fix)
         self.weather.add(msg, obs)
-        self.broadcast({"type": "message", "message": msg,
-                        "aircraft": self.tracker.snapshot(key) if key else None})
+        if live:
+            self.broadcast({"type": "message", "message": msg,
+                            "aircraft": self.tracker.snapshot(key) if key else None})
         for old in changed:
             old_key = self.tracker.refresh(old)
-            self.broadcast({"type": "update", "message": old,
-                            "aircraft": self.tracker.snapshot(old_key) if old_key else None})
+            if live:
+                self.broadcast({"type": "update", "message": old,
+                                "aircraft": self.tracker.snapshot(old_key) if old_key else None})
+
+    def replay(self, now):
+        """Refill the store, flight cards, ground stations and wind samples from the archive,
+        as far back as history_hours. Runs in a thread before anything else touches those
+        structures: the receivers' datagrams queue up meanwhile (see ingest) and the API
+        waits (see make_app)."""
+        since = now - self.cfg["history_hours"] * 3600
+        hot = now - HOT_HOURS * 3600
+        t0, n, skipped = time.time(), 0, 0
+        for rec in self.archive.records(since):
+            try:
+                msg = revive(rec)
+                adsb = rec.get("adsb") or {}
+                fix = {"Lat": adsb["lat"], "Long": adsb["lon"], "Alt": adsb.get("alt")} if "lat" in adsb else None
+                self.file(msg, None, station_broadcast(msg), observations(msg) if msg["kind"] == "acars" else [],
+                          fix, live=False)
+            except Exception:
+                if not skipped:
+                    log.exception("archive replay: a record wouldn't come back (first of any)")
+                skipped += 1
+                continue
+            n += 1
+            if n % 2000 == 0:
+                # Compact as we go, or a week of live dicts would not fit in memory. But not
+                # what the block assembler may still re-file, so stay clear of its window.
+                self.store.compact(min(hot, msg["ts"] - 2 * BLOCK_WINDOW_SECS))
+        self.store.compact(hot)
+        self.archive.replayed = n
+        log.info("rebuilt %d messages for %d aircraft from the archive in %.0f s%s", n, len(self.tracker.aircraft),
+                 time.time() - t0, f", skipped {skipped}" if skipped else "")
 
     def is_repeat(self, msg):
         """Aircraft retransmit when they miss the ground acknowledgement (which we can't hear)."""
-        if msg["kind"] not in ("acars", "cpdlc") or not msg["text"]:
+        # Squitters are periodic broadcasts, identical by design, not retransmissions.
+        if msg["kind"] not in ("acars", "cpdlc") or not msg["text"] or msg["label"] == "SQ":
             return False
         now = time.time()
         sig = (msg["source"], msg["icao"] or msg["reg"] or msg["flight"], msg["label"], msg["msgno"], msg["text"])
@@ -910,7 +1005,7 @@ class ACARSWeb:
             "generated": now,
             "history_hours": self.cfg["history_hours"],
             "server": {"memory_mb": process_memory_mb(), "messages_in_memory": len(self.store.messages),
-                       "archived": self.archive.written if self.archive.enabled else None,
+                       "archived": self.archive.written,
                        "aircraft_tracked": len(self.tracker.aircraft), "uptime": int(now - self.started),
                        "vrs_configured": self.vrs.configured, "vrs_ok": self.vrs.ok, "vrs_aircraft": len(self.vrs.by_icao)},
             "health": self.health.report(),
@@ -1015,21 +1110,37 @@ class ACARSWeb:
             await loop.create_datagram_endpoint(lambda s=source: UDPIngest(self, s), local_addr=("127.0.0.1", port))
             log.info("listening for %s JSON on udp/127.0.0.1:%d", source, port)
         log.info("keeping %s hours of messages in memory", self.cfg["history_hours"])
-        if self.archive.enabled:
-            log.info("archiving every message to %s, keeping %d days", self.archive.dir, self.archive.retention_days)
-        # About a second of work; off the event loop so the receivers aren't kept waiting.
+        log.info("archiving every message to %s, keeping %d days", self.archive.dir, self.archive.retention_days)
+        self.tasks.append(asyncio.create_task(self.start()))
+
+    async def start(self):
+        """Rebuild the live view from the archive, then open the gates. Both the database
+        load (about a second) and the replay (a minute or so for a week) run off the event
+        loop, so the receivers' datagrams keep being accepted and queued."""
         await asyncio.to_thread(self.aircraft_db.load)
-        app["tasks"] = [asyncio.create_task(self.vrs_loop()), asyncio.create_task(self.purge_loop()),
-                        asyncio.create_task(self.health_loop())]
+        try:
+            await asyncio.to_thread(self.replay, time.time())
+        except Exception:  # a broken archive must not keep the receiver off the air
+            log.exception("archive replay failed; starting with what arrives from now on")
+        pending, self.pending = self.pending, []
+        self.ready.set()
+        for source, payload in pending:
+            self.ingest(source, payload)
+        if pending:
+            log.info("fed in %d messages that arrived during the rebuild", len(pending))
+        self.tasks += [asyncio.create_task(self.vrs_loop()), asyncio.create_task(self.purge_loop()),
+                       asyncio.create_task(self.health_loop())]
 
     async def on_cleanup(self, app):
-        for task in app["tasks"]:
+        for task in self.tasks:
             task.cancel()
         self.archive.close()
 
     def make_app(self):
         @web.middleware
         async def revalidate(request, handler):
+            if request.path.startswith(("/ws", "/api/")) and not self.ready.is_set():
+                await self.ready.wait()  # the store is being rebuilt from the archive
             # Make browsers re-check page code on every load, so updates show up without a hard refresh.
             response = await handler(request)
             if not request.path.startswith(("/ws", "/api/")):

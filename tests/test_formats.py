@@ -235,3 +235,62 @@ def test_report_239_feeds_the_wind_map():
            "text": "A321,059330,1,1,TB000000/REP239,00,00,4/239N113DX0453093026043217775N38764W105 15340-14-43209 64AF0501"}
     assert translate.observations(msg) == [{"ts": 1790742745.0, "lat": 38.764, "lon": -105.015, "alt": 34000,
                                             "temp": -43, "wdir": 209, "wspd": 64}]
+
+
+def test_delta_wob_is_a_wind_observation_with_position():
+    msg = {"label": "H1", "sublabel": "DF", "flight": "DL1135", "kind": "acars", "ts": 1793842303,
+           "text": "*WOBDTWPHX5100F 0511013143M230M52336081506N40577W101246263029:\r\n"}
+    r = translate.translate(msg)
+    assert r["category"] == "data" and not r.get("generic")
+    assert r["details"][0] == "Flight DTW Detroit → PHX Phoenix"
+    assert "36,000 ft, -52°C, wind 263° at 29 kt, Mach 0.815, at 40.96°N 101.41°W" in r["details"][1]
+    assert r["position"] == {"lat": 40.9617, "lon": -101.41, "src": "Weather report"}
+    obs = translate.observations(msg)
+    assert len(obs) == 1 and obs[0]["alt"] == 36000 and obs[0]["temp"] == -52.3 and (obs[0]["wdir"], obs[0]["wspd"]) == (263, 29)
+    assert obs[0]["ts"] == 1793842260.0  # 01:31 UTC on the message's day
+    dashed = translate.translate(dict(msg, text="*WOBBOSLAX5100G 2008------M240M52338279405N41325W100431285039:\r\n"))
+    assert "Latest: 38,200 ft" in dashed["details"][1]
+    assert translate.observations(dict(msg, text="*WOBBOSLAX5100G 2008------M240M52338279405N41325W100431285039:\r\n"))[0]["ts"] == 1793842303
+
+
+def test_sb01_weather_rows():
+    text = ("SB0121BA_N791UA  KLAXKEWR1\r\n 38034-1049790807 36194-450205056098/9W022035\r\n"
+            " 38105-1048160808 36877-460212061098YY,020030\r\n 38176-1046510809 36990-460216064010/9W013016")
+    r = translate.translate({"label": "H1", "sublabel": "10", "flight": "UA2303", "kind": "acars", "text": text, "ts": 1793866324})
+    assert r["summary"] == "Weather observations (3 samples, climbing 36,194 → 36,990 ft)"
+    assert r["details"] == ["Flight KLAX Los Angeles → KEWR Newark",
+                            "Latest 08:09 UTC: 36,990 ft, -46°C, wind 216° at 64 kt, at 38.18°N 104.65°W"]
+    low = translate.translate({"label": "H1", "sublabel": "10", "flight": "UA1", "kind": "acars", "ts": 1793880724,
+                               "text": "SB0122BA_N779UA  PHOGKDEN237\r\n 39782-1048041212 11061 030052014010GMY007009"})
+    assert "11,061 ft, 3°C, wind 052° at 14 kt" in low["details"][1]
+
+
+def test_american_trip_report_with_route_uses_the_last_snapshot():
+    text = ("A38/A31938,1,1/C1TRP,151454,KORD,KDEN,08,8,50438/C2409113,-1004984,299,01283,421,0299,1/"
+            "C3407668,-1008586,300,01280,420,0298,1/C4406956,-1012652,299,01278,417,0299,1/"
+            "C5406221,-1016750,300,01276,415,0298,1/C6405464,-1020858,299,01273,412,0299,1/C70000545,000016")
+    r = translate.translate({"label": "H1", "sublabel": "DF", "flight": "AA1225", "kind": "acars", "text": text})
+    assert r["summary"] == "Automated trip report (5 samples, latest FL299 at 15:14:54 UTC, 412 kt)"
+    assert r["details"][:2] == ["Flight KORD Chicago → KDEN Denver", "Latest position 40.55°N 102.09°W"]
+    assert r["position"] == {"lat": 40.5464, "lon": -102.0858, "src": "Trip report"}
+    named = translate.translate({"label": "H1", "sublabel": "DF", "flight": "UA480", "kind": "acars",
+                                 "text": "A32/A31932,1,1/HYDRAULIC,REPORT,/C1.N822UA,OCT,22,140241,KPSKPS,KDEN/FLIGHT.NUMBER/"})
+    assert named["summary"] == "Hydraulic report at 14:02:41 UTC" and not named.get("generic")
+
+
+def test_airbus_fault_report_and_warning():
+    flr = translate.translate({"label": "H1", "flight": "UA1", "kind": "acars",
+                               "text": "#CFBFLR/FR26093014140022663406AFS:FAC1/RT ACTR 10CC\r/IDAFS 1"})
+    assert flr["category"] == "maintenance" and flr["summary"] == "Fault report: AFS:FAC1/RT ACTR 10CC"
+    assert flr["details"][:2] == ["Logged 14:14 UTC", "ATA chapter 22-66-34"]
+    wrn = translate.translate({"label": "H1", "sublabel": "CF", "flight": "UA549", "kind": "acars",
+                               "text": "WRN/WN26110100150031000006RECORDER SYS FAULT\r"})
+    assert wrn["summary"] == "Cockpit warning: RECORDER SYS FAULT" and wrn["details"][:2] == ["At 00:15 UTC", "ATA chapter 31"]
+
+
+def test_frequency_change_uplink_and_low_level_report_239():
+    r = translate.translate({"label": ":;", "kind": "acars", "direction": "up", "text": "131550"})
+    assert r["category"] == "link" and r["summary"] == "Ground station moved the aircraft to 131.550 MHz"
+    low = translate.translate({"label": "H1", "sublabel": "DF", "flight": "DL1", "kind": "acars",
+                               "text": "239N37530751 93026175735296 3988-10461 60 19 14310  6AA-528 27720 \r\n176 1990067 8313       KDENKLGA"})
+    assert "FL60" in low["details"] and "Wind 310° at 6 kt" in low["details"] and low["position"]["lat"] == 39.88

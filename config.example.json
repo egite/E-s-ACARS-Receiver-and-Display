@@ -46,7 +46,7 @@
 
   "history_hours": 2,
   "aircraft_db": "AircraftDatabase.sqb",
-  "archive": {"enabled": true, "dir": "archive/messages", "retention_days": 7},
+  "archive": {"dir": "archive/messages", "retention_days": 7},
 
   "health": {
     "silence_minutes": {"acars": 30, "vdl2": 5},

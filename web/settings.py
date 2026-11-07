@@ -41,8 +41,7 @@ def editable(cfg):
         "vrs_feed": cfg.get("vrs_feed"),
         "vrs_poll_secs": cfg.get("vrs_poll_secs", 5),
         "history_hours": cfg.get("history_hours", 2),
-        "archive": {k: (cfg.get("archive") or {}).get(k, d)
-                    for k, d in (("enabled", False), ("retention_days", 7))},
+        "archive": {"retention_days": (cfg.get("archive") or {}).get("retention_days", 7)},
         "max_position_km": cfg.get("max_position_km", 1000),
         "health": {
             "silence_minutes": {name: silence.get(name, d) for name, d in (("acars", 30), ("vdl2", 5))},
@@ -157,8 +156,7 @@ def validate(new, current):
     out["max_position_km"] = _number(errors, "max_position_km", new.get("max_position_km"), 10, 20000, integer=True)
     # The archive is on disk, so its limit is disk: a year is around 10 GB at this site's rate.
     archive = new.get("archive") or {}
-    out["archive"] = {"enabled": bool(archive.get("enabled")),
-                      "retention_days": _number(errors, "archive.retention_days",
+    out["archive"] = {"retention_days": _number(errors, "archive.retention_days",
                                                 archive.get("retention_days"), 1, 365, integer=True)}
 
     health = new.get("health") or {}

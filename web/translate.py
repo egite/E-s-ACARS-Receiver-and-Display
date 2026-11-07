@@ -349,6 +349,50 @@ def translate_cpdlc(raw):
     return None
 
 
+def translate_decoded(msg):
+    """What the archive kept of a libacars decode when the raw JSON is gone (the start-up
+    rebuild): the line summarize_decoded wrote live - "WILCO", "REQUEST CLIMB TO [altitude]
+    — flight_level: 320", "adsc msg — lat: 40.66, lon: -106.55, alt: 33000, ...". Read back
+    the way translate_cpdlc reads the structure, so a replayed message says what it said."""
+    decoded = msg.get("decoded") or ""
+    if not decoded or decoded.startswith("Boeing OHMA"):
+        return None
+    head, _, rest = decoded.partition(" — ")
+    pairs = re.findall(r"(\w+): ([^,]+)", rest)
+    values = [cpdlc_value((k,), int(v) if re.fullmatch(r"-?\d+", v) else v) for k, v in pairs]
+    if head.startswith("adsc"):
+        fields = dict(pairs)
+        try:
+            lat, lon = float(fields["lat"]), float(fields["lon"])
+        except (KeyError, ValueError):
+            return result("position", "ADS-C automatic position report to ATC")
+        alt = fields.get("alt")
+        return result("position", "ADS-C automatic position report to ATC",
+                      [latlon(lat, lon), feet(int(float(alt))) if alt else None],
+                      position={"lat": round(lat, 4), "lon": round(lon, 4), "src": "ADS-C"})
+    if msg.get("kind") != "cpdlc":
+        return None
+    if "disconnect" in head:
+        return result("atc", "CPDLC session with ATC closed by the aircraft (disconnect)")
+    who = "ATC" if msg.get("direction") == "up" else "Crew"
+    phrases = []
+    for label in [l.strip() for l in head.split(" / ") if l.strip()]:
+        if label.upper() in CPDLC_PHRASES and not values:
+            phrases.append(CPDLC_PHRASES[label.upper()])
+            continue
+        if label.lower() == "[versionnumber]":
+            phrases.append("Avionics reported their CPDLC version while connecting to ATC")
+            continue
+        text = sentence(label)
+        for v in values:
+            if "[" in text:
+                text = re.sub(r"\[[^\]]+\]", lambda _: v, text, count=1)
+        phrases.append(f"{who}: “{text}”" if who == "ATC" else f"Crew request/report to ATC: “{text}”")
+    if phrases:
+        return result("atc", "; ".join(phrases), ["Controller–pilot datalink (CPDLC)"])
+    return result("atc", "CPDLC message (contents could not be decoded)")
+
+
 # ------------------------------------------------------------- FMC reports
 
 FMC_CODES = {
@@ -733,6 +777,31 @@ def _signed(sign, digits, tenths=False):
 def weather_samples(text):
     """Returns (origin, destination, [sample dicts]) for known weather-observation formats, or None."""
     text = re.sub(r"^#DFB", "", text)  # H1 messages carry the sublabel inline when the decoder didn't split it
+    # Delta *WOB (one observation a message): *WOB DTW PHX 5100F DDMM HHMMSS TAT SAT FL Mach ??
+    # lat (DDMMm) lon (DDDMMm) wind ddd ff. "*WOBDTWPHX5100F 0511013143M230M52336081506N40577W101246263029:"
+    # read against ADS-B over 1,300 reports: position 1 km off, flight level exact, and the
+    # Mach, wind and track close the wind triangle on the ADS-B ground speed. The first
+    # temperature is total, the second static (the one the wind map wants). Date and time
+    # are sometimes dashes; the message's own time stands in then.
+    m = re.match(r"\*WOB([A-Z]{3})([A-Z]{3})\d{4}[A-Z] (?:\d{4}|-{4})(\d{6}|-{6})[MP]\d{3}([MP])(\d{3})(\d{3})(\d{3})\d{2}"
+                 r"([NS])(\d{2})(\d{3})([EW])(\d{3})(\d{3})(\d{3})(\d{3}):", text)
+    if m:
+        orig, dest, t, sg, sat, level, mach, ns, la, lam, ew, lo, lom, wd, ws = m.groups()
+        sample = {"lat": (int(la) + int(lam) / 10 / 60) * (-1 if ns == "S" else 1),
+                  "lon": (int(lo) + int(lom) / 10 / 60) * (-1 if ew == "W" else 1),
+                  "time": t[:4] if t.isdigit() else "", "alt": int(level) * 100, "temp": _signed(sg, sat, True),
+                  "wdir": int(wd), "wspd": int(ws), "mach": int(mach) / 1000}
+        return orig, dest, [sample]
+    # Boeing SB01 weather report (United, American, FedEx, BA, Swiss, Korean...): a header
+    # "SB0122BA_N779UA  PHOGKDEN237" then rows " 38034-1049790807 36194-450205056098/9W022035":
+    # lat and lon in thousandths, HHMM, altitude ft, temperature in tenths (a space for +),
+    # wind ddd ff, then six characters and six digits not read. Same row as United's EB0032AA_.
+    m = re.match(r"SB01\d\dBA_\S+\s+(" + ICAO_AP + ")(" + ICAO_AP + ")", text)
+    if m:
+        rows = re.findall(r"(-?\d{5})(-?\d{5,6})(\d{4}) (\d{5})([-+ ]\d{3})(\d{3})(\d{3})", text)
+        samples = [{"lat": int(la) / 1000, "lon": int(lo) / 1000, "time": t, "alt": int(alt), "temp": int(temp) / 10,
+                    "wdir": int(wd), "wspd": int(ws)} for la, lo, t, alt, temp, wd, ws in rows]
+        return m.group(1), m.group(2), samples
     # Southwest ++765xx/++865xx (documented AMDAR layout): lat DDMM.m, lon, DDHHMM, alt ft, temp °C, wind, phase
     # United EB0116AB_ carries the same sample rows after a comma-separated header.
     m = re.match(r"\+\+\d+,[^,]*,[^,]*,\d{6},[^,]*,(" + ICAO_AP + "),(" + ICAO_AP + ")", text) or \
@@ -835,9 +904,11 @@ def translate_weather(msg):
     alts = f"{first['alt']:,} → {last['alt']:,} ft" if trend != "level" else f"{last['alt']:,} ft"
     summary = f"Weather observations ({plural(len(samples), 'sample')}, {trend} {alts})".replace("level ", "at ")
     t = last["time"]
-    details.append(f"Latest {t[:2]}:{t[2:4]} UTC: {last['alt']:,} ft, {last['temp']:.0f}°C, "
-                   f"wind {last['wdir']:03d}° at {last['wspd']} kt, at {latlon(last['lat'], last['lon'])}")
-    return result("data", summary, details)
+    details.append(f"Latest{f' {t[:2]}:{t[2:4]} UTC' if t else ''}: {last['alt']:,} ft, {last['temp']:.0f}°C, "
+                   f"wind {last['wdir']:03d}° at {last['wspd']} kt" + (f", Mach {last['mach']:.3f}" if last.get("mach") else "") +
+                   f", at {latlon(last['lat'], last['lon'])}")
+    return result("data", summary, details, position={"lat": round(last["lat"], 4), "lon": round(last["lon"], 4),
+                                                       "src": "Weather report"} if len(samples) == 1 else None)
 
 
 # ------------------------------------------------- aircraft monitoring reports
@@ -1157,8 +1228,8 @@ def translate_delta_apm(text):
 # right: through the wind triangle it shrinks the spread of cruise ground speeds from 38 kt
 # to a true-airspeed spread of 7 kt. And the temperatures are total and static: the Mach
 # they imply equals the Mach that true airspeed implies, to 0.000 at the median (+-0.009).
-REP239_LONG = re.compile(r"239N\w+?\d{15}([NS])([\d ]{5})([EW])([\d ]{6})(\d{3})([- \d]{3})([- \d]{3})([ \d]{3})([ \d]{3})A")
-REP239_SHORT = re.compile(r" (\d{4})(-1\d{4})(\d{3})([- \d]{3})([- \d]{3})([ \d]{3})([ \d]{3})A")
+REP239_LONG = re.compile(r"239N\w+?\d{15}([NS])([\d ]{5})([EW])([\d ]{6})([ \d]{3})([- \d]{3})([- \d]{3})([ \d]{3})([ \d]{3})A")
+REP239_SHORT = re.compile(r" (\d{4})(-1\d{4})([ \d]{3})([- \d]{3})([- \d]{3})([ \d]{3})([ \d]{3})A")
 
 
 def report239_values(text):
@@ -1178,9 +1249,9 @@ def report239_values(text):
     else:
         return None
     level, tat, sat, wind_dir, wind_kt = rest
-    if not (tat.strip(" -") and sat.strip(" -")):
+    if not (tat.strip(" -") and sat.strip(" -") and level.strip()):
         return None
-    return {"lat": lat, "lon": lon, "level": int(level), "tat": int(tat), "sat": int(sat),
+    return {"lat": lat, "lon": lon, "level": pad(level), "tat": int(tat), "sat": int(sat),
             "wdir": pad(wind_dir), "wspd": pad(wind_kt)}
 
 
@@ -1227,6 +1298,23 @@ def _translate_monitoring(msg):
     trip = translate_trip_report(text)
     if trip:
         return trip
+    # American / US Airways trip report with the route in its header and up to five snapshots,
+    # oldest first: C1TRP,151454,KORD,KDEN,08,8,50438/C2409113,-1004984,299,01283,421,0299,1/...
+    # Each snapshot is lat, lon (four decimals), flight level, an unread count, ground speed and
+    # static pressure in hPa. The last snapshot is the aircraft at the time of the report (the
+    # first sits well behind it), checked against ADS-B over 4,800 reports.
+    m = re.search(r"(A\d\d)/A\d{5},\d,\d/C1TRP,(\d{6}),(" + ICAO_AP + "),(" + ICAO_AP + "),", text)
+    if m:
+        rows = re.findall(r"/C\d(-?\d{5,6}),(-?\d{6,7}),(\d{3}),\d{5},(\d{3}),(\d{4}),\d(?=/)", text)
+        details = [f"Flight {m.group(3)} → {m.group(4)}", f"Report {m.group(1)}"]
+        if not rows:
+            return result("data", f"Automated trip report at {hhmmss(m.group(2))}", details)
+        la, lo, level, speed, _ = rows[-1]
+        lat, lon = int(la) / 10000, int(lo) / 10000
+        details.insert(1, f"Latest position {latlon(lat, lon)}")
+        return result("data", f"Automated trip report ({plural(len(rows), 'sample')}, latest FL{int(level)} "
+                              f"at {hhmmss(m.group(2))}, {int(speed)} kt)", details,
+                      position={"lat": lat, "lon": lon, "src": "Trip report"})
     # ACMS trip report samples: A38/A31938,1,1/C1TRP,155614,385774,-1026323,315,...
     m = re.search(r"(A\d\d)/A\d{5},\d,\d/C1TRP,(\d{6}),(-?\d{5,7}),(-?\d{6,8}),(\d{3})", text)
     if m:
@@ -1280,6 +1368,15 @@ def _translate_monitoring(msg):
             # code: name the route only when both ends are airports.
             known = route and all(airports.city(c) for c in route)
             return result("data", name + (f", {phase_name}" if phase_name else ""), [route_detail if known else None])
+    # Any other ACMS report with the A-number header (after the readers that know more of it): A32/A31932,1,1/HYDRAULIC,REPORT,/C1.N822UA,OCT,22,140241,...
+    # or A36/A31936,1,1/C13014,0001,03,22,135754,0,/ - the report number and, when it has
+    # one, a name and a generation time are all that is readable.
+    m = re.match(r"(A\d\d)/A\d{5},\d,\d/(?:([A-Z]+),REPORT,)?", text)
+    if m:
+        when = re.search(r"(?<![\d.])(\d{6})(?![\d.])", text[m.end():])
+        name = f"{m.group(2).capitalize()} report" if m.group(2) else f"Aircraft monitoring report {m.group(1)}"
+        return result("data", name + (f" at {hhmmss(when[1])}" if when and int(when[1][:2]) < 24 and int(when[1][2:4]) < 60 else ""),
+                      [f"Report {m.group(1)}" if m.group(2) else None])
     return None
 
 
@@ -1975,16 +2072,22 @@ def translate(msg, raw=None):
         return result("link", "ATN network frame")
 
     cpdlc = translate_cpdlc(raw) if kind == "cpdlc" or (raw and "arinc622" in str(raw)[:4000]) else None
+    if cpdlc is None and raw is None:
+        cpdlc = translate_decoded(msg)
     if cpdlc:
         return cpdlc
     if (msg.get("decoded") or "").startswith("Boeing OHMA") or text.startswith("OHMA") or (label == "H1" and sub == "T1"):
         return result("data", "Boeing OHMA aircraft health report", ["Onboard health-management data"])
 
     if label == "SQ":
-        m = re.match(r"\d\dX([A-Z])([A-Z]{3})(" + ICAO_AP + r")(\d)(\d{4})([NS])(\d{5})([EW])V?(\d{6})?/?(\w+)?", text)
-        if m:
-            return result("link", f"Ground station broadcast: {m.group(10) or ''} station {m.group(2)} at {m.group(3)}".replace("  ", " "),
-                          [f"VDL2 frequency {int(m.group(9)) / 1000:.3f} MHz" if m.group(9) else None])
+        s = parse_squitter(text)
+        if s:
+            r = result("link", f"ground station {s['id']} broadcasting its position",
+                       [f"At {s['icao']}, {latlon(s['lat'], s['lon'])}",
+                        f"VDL2 on {s['vdl_freq']:.3f} MHz" if s["vdl_freq"] else None])
+            # Added after the airport naming: SITA is also an ICAO code (Taiobeiras, Brazil).
+            r["summary"] = f"{s['network']} {r['summary']}"
+            return r
         return result("link", "Ground station broadcast (squitter)")
     if label == "SA":
         link = find_key(raw, "current_link") if raw else None
@@ -1995,6 +2098,10 @@ def translate(msg, raw=None):
     if not text:
         return result("link", f"Message with no text (label {label})")
 
+    if label == ":;":  # ARINC 620 frequency change: the new ACARS channel in kHz
+        m = re.fullmatch(r"(\d{3})(\d{3})", text.strip())
+        if m:
+            return result("link", f"Ground station moved the aircraft to {m[1]}.{m[2]} MHz")
     afn = translate_afn(text) if ".AFN/" in text[:40] else None
     if afn:
         return afn
@@ -2188,7 +2295,18 @@ def translate(msg, raw=None):
     if report:
         return report
 
-    if sub == "CF" or re.match(r"WRN/|FLR/|FAULT", text):
+    if sub == "CF" or re.match(r"(?:#CFB)?(?:WRN/|FLR/|FAULT)", text):
+        # Airbus CFDS: FLR/FR 260930 1414 00 22 66 34 06 AFS:FAC1/RT ACTR 10CC  and
+        #              WRN/WN 261101 0015 00 31 00 00 06 RECORDER SYS FAULT
+        # date YYMMDD, time HHMM, then the ATA chapter, section and subject the fault is
+        # filed under, and the fault or warning text up to the line's end.
+        m = re.search(r"(FLR|WRN)/(?:FR|WN)(\d{6})(\d{4})\d\d(\d\d)(\d\d)(\d\d)\d\d([^\r\n]*)", text)
+        if m and int(m[3][:2]) < 24 and int(m[3][2:]) < 60:
+            what = re.sub(r"\s+", " ", m[7]).strip()
+            ata = m[4] + (f"-{m[5]}" if m[5] != "00" else "") + (f"-{m[6]}" if m[6] != "00" else "")
+            kind, when = ("Fault report", "logged") if m[1] == "FLR" else ("Cockpit warning", "at")
+            return result("maintenance", f"{kind}: {what}" if what else kind,
+                          [f"{when.capitalize()} {m[3][:2]}:{m[3][2:]} UTC", f"ATA chapter {ata}", "Central fault display system"])
         m = re.search(r"/([A-Z][A-Z0-9 ]{5,})$", text)
         if m:
             return result("maintenance", f"Maintenance alert: {m.group(1).strip()}", ["Central fault display system"])
@@ -2245,7 +2363,7 @@ def observations(msg):
     if found:
         for s in found[2]:
             if -90 <= s["lat"] <= 90 and -180 <= s["lon"] <= 180 and s["alt"] > 0:
-                out.append({"ts": _obs_time(s["time"], ts), "lat": round(s["lat"], 4), "lon": round(s["lon"], 4),
+                out.append({"ts": _obs_time(s["time"], ts) if s["time"] else ts, "lat": round(s["lat"], 4), "lon": round(s["lon"], 4),
                             "alt": s["alt"], "temp": s["temp"], "wdir": s["wdir"], "wspd": s["wspd"]})
         return out
     # Flight-computer position report: temperature and wind at the reported flight level

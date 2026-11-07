@@ -16,7 +16,8 @@ live web page: a map, flight cards with message timelines, a raw feed, and a rec
 - **Receiver health**: per-dongle frame rates, signal, error rates, service state, silent-dongle alerts, and
   VDL2 tuning-error (ppm drift) tracking with an optional automatic correction.
 - **Phone friendly**: tabbed Flights / Map layout, full-screen flight view.
-- **Nothing written to disk**: messages are kept in memory for `history_hours`.
+- **Memory for speed, disk for keeps**: messages are served from memory for `history_hours`, and every
+  one is also appended to a daily archive file, from which the live view is rebuilt on start.
 
 ![Flights page: map with ACARS and VDL2 aircraft, wind barbs, and flight cards with plain-English message timelines](screenshots/mainpage.png)
 
@@ -357,12 +358,16 @@ was looked up rather than received carries `icao_src` saying how (`aircraft data
 `registration` from VRS, or `callsign`). The file isn't in the repository (147 MB is over
 GitHub's limit): put it in the project folder. Without it everything works as before.
 
-`archive` is the durable record, and it survives restarts. Both it and `history_hours` are
-on the Settings page, next to each other, because they are easy to mistake for one another:
-one is hours of memory that a restart empties, the other is days of disk that outlive it.
+`archive` is the durable record, and it is always on: the in-memory store is the fast copy,
+and on every start the server replays the last `history_hours` of the archive through the
+translator to refill it (about a minute for a week of traffic here), so a restart no longer
+empties the page, and translator improvements reach what is already on screen. Datagrams
+from the decoders are queued during the rebuild and filed afterwards; the pages wait for
+it. Both settings are on the Settings page, next to each other: one is hours of memory,
+the other is days of disk.
 
 ```json
-"archive": { "enabled": true, "dir": "archive/messages", "retention_days": 7 }
+"archive": { "dir": "archive/messages", "retention_days": 7 }
 ```
 
 It appends every frame received, link-layer ones included, to one JSONL file per UTC day, and

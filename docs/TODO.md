@@ -20,11 +20,11 @@ Two ways to build it, to decide when we get here:
   and restarts; on start the server loads the snapshot if it is recent. Simple, but it is a
   second copy of what the archive already holds, and a crash (rather than the button) still
   loses it.
-- **Rebuild from the archive on start.** On every start, replay the last `history_hours` of
-  the archive through the translator (and `web/blocks.py` for multi-block reports) to refill
-  the store. The button then only has to restart. This also survives crashes and power cuts,
-  and picks up translator improvements for the messages already on screen. Cost: replaying a
-  day of archive takes on the order of a minute on this hardware, so start-up is slower.
+- **Rebuild from the archive on start.** *Done 2026-10-30* (`ACARSWeb.replay`): on every
+  start the last `history_hours` of the archive go through the translator and `web/blocks.py`
+  to refill the store, with the decoders' datagrams queued meanwhile and the API held until
+  the rebuild is over. The archive is always on now. Measured: about 7 s per archived day of
+  translation, so a week is on the order of a minute. The button then only has to restart.
 
 Either way the restart needs to work under systemd (`systemd/acars-web.service`): exit and let
 `Restart=` bring it back, rather than re-exec in place.

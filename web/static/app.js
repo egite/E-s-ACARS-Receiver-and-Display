@@ -599,9 +599,20 @@ async function refreshStations() {
   try {
     const data = await fetch("/api/ground-stations").then((r) => r.json());
     stationLayer.clearLayers();
+    // One tower per site: Denver's five transmitters all report the same coordinates, and
+    // stacked markers leave only the top tooltip reachable.
+    const sites = new Map();
     for (const s of data.located) {
-      L.marker([s.lat, s.lon], { icon: L.divIcon({ className: "tower", html: TOWER_SVG, iconSize: [22, 22], iconAnchor: [11, 20] }), zIndexOffset: -100 })
-        .bindTooltip(`<b>${esc(s.id)}</b> ${esc(s.network)} ground station${s.vdl_freq ? ` · VDL2 ${s.vdl_freq.toFixed(3)} MHz` : ""}<br>heard ${num(s.count)}× · last ${ago(s.last_seen)}`)
+      const key = `${s.lat.toFixed(3)},${s.lon.toFixed(3)}`;
+      if (!sites.has(key)) sites.set(key, []);
+      sites.get(key).push(s);
+    }
+    for (const list of sites.values()) {
+      const names = list.map((s) => `<b>${esc(s.id)}</b> ${esc(s.network)}${s.via === "GSIF" ? " (VDL2)" : ""}`).join("<br>");
+      const freqs = [...new Set(list.filter((s) => s.vdl_freq).map((s) => s.vdl_freq.toFixed(3)))];
+      const heard = list.reduce((n, s) => n + s.count, 0), last = Math.max(...list.map((s) => s.last_seen));
+      L.marker([list[0].lat, list[0].lon], { icon: L.divIcon({ className: "tower", html: TOWER_SVG, iconSize: [22, 22], iconAnchor: [11, 20] }), zIndexOffset: -100 })
+        .bindTooltip(`${names}<br>${list.length === 1 ? "ground station" : `${list.length} ground stations`}${freqs.length ? ` · VDL2 ${freqs.join(", ")} MHz` : ""}<br>heard ${num(heard)}× · last ${ago(last)}`)
         .addTo(stationLayer);
     }
     stationLayer.addTo(map);
