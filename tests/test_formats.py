@@ -436,3 +436,19 @@ def test_business_jet_part_number_and_landing_events():
     on = "02" + "".join(table[c] for c in "ON03,N40274W105008,KGXY,KFNL,1107,1922,002.0,0007,    0")
     r = translate.translate({"label": "44", "flight": "GS412M", "kind": "acars", "text": on})
     assert r["category"] == "flight" and r["summary"] == "Landed: KGXY Greeley → KFNL Loveland at 19:22 UTC"
+
+
+def test_clear_text_stragglers_read():
+    read = lambda label, flight, text: translate.translate({"label": label, "flight": flight, "kind": "acars", "text": text})
+    assert read("5Z", "MQ3834", "OS KMSO /FTM\r\nM51 DFW 3834 DLY DUE TO\r\nLATE INBOUND AIRCRAFT")["summary"] == \
+        "Message to dispatch at KMSO Missoula: “M51 DFW 3834 DLY DUE TO LATE INBOUND AIRCRAFT”"
+    assert read("5Z", "US1313", "OS KDEN /IR KDEN1735")["summary"] == "In range of KDEN Denver, arriving 17:35 UTC"
+    off = read("22", "WN1823", "OFF02\r\nKDEN,KSMF,0435,20.4")
+    assert off["summary"] == "Took off at 04:35 UTC" and off["details"] == ["Flight KDEN Denver → KSMF Sacramento", "Fuel on board 20,400 lb"]
+    assert read("4C", "F94186", ".N337FR,FFT4186,KDEN,KDTW,RT1138,LT0156,0156,0143,")["details"][0] == "RT 11:38 · LT 01:56 · 01:56 · 01:43"
+    assert read("10", "BA21ML", "INI0302KDENEGLL0821BENDM      CROYY  WHIRZ  -----------")["summary"] == \
+        "Flight plan loaded: KDEN Denver → EGLL London via BENDM, CROYY, WHIRZ"
+    assert read("80", "AS0363", "3V01 ACK    0363/01 KMCO/KPDX .N464AS\r\n27751")["summary"] == "Crew acknowledged dispatch message 27751"
+    fbo = read("14", "GS0001", "(2AAAAN40563W102589SIGNATURE       N573QS   ETA 1845L.  1 PAX(Z")
+    assert fbo["category"] == "crew" and fbo["position"] == {"lat": 40.563, "lon": -102.589, "src": "Label 14"}
+    assert fbo["summary"] == "Message to ground handling: “SIGNATURE N573QS ETA 1845L. 1 PAX”"

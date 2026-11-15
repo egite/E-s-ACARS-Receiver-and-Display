@@ -2415,10 +2415,17 @@ def translate(msg, raw=None):
         r = translate_united_slash(msg)
         if r:
             return r
-    if airline == "AA" and label == "5Z":
+    if airline in ("AA", "US", "MQ") and label == "5Z":
         m = re.match(r"OS (" + ICAO_AP + r")\s*(.*)", text, re.S)
         if m:
             rest = m.group(2)
+            if rest.startswith("/IR "):
+                return result("flight", f"In range of {m.group(1)}" + (f", arriving {w[1][:2]}:{w[1][2:]} UTC" if (w := re.match(r"/IR \w{4}(\d{4})", rest)) else ""))
+            if rest.startswith("/FTM"):
+                words = [l for l in re.split(r"[\r\n]+", rest[4:]) if re.search(r"[A-Z]{2,}", l)]
+                return result("crew", f"Message to dispatch at {m.group(1)}: \u201c{reflow(words)}\u201d" if words else "Message to dispatch")
+            if re.match(r"/ACK\d+", rest):
+                return result("link", f"Crew acknowledged dispatch message {rest[4:].strip()}")
             parts = [f"departure runway {d}" for d in re.findall(r"/DPR(\d\d[LRC]?)", rest)] + \
                     [f"arrival runway {a}" for a in re.findall(r"/ARR(\d\d[LRC]?)", rest)]
             words = [l for l in re.split(r"[\r\n]+", rest)[1:] if re.search(r"[A-Z]{2,}", l)]
@@ -2470,6 +2477,46 @@ def translate(msg, raw=None):
         r = translate_frontier(msg)
         if r:
             return r
+    if airline == "WN" and label == "22":
+        # The OUT/OFF/ON/IN events in clear, the same layout as label 37's enciphered OUT:
+        # OFF02 / KDEN,KPHL,0210,28.6 - route, time, fuel in thousands of pounds.
+        m = re.match(r"(OUT|OFF|ON|IN)\d\d\s+(" + ICAO_AP + "),(" + ICAO_AP + r"),(\d{4}),(\d+\.\d)", text)
+        if m and int(m[4][:2]) < 24:
+            names = {"OUT": "Left the gate", "OFF": "Took off", "ON": "Landed", "IN": "Arrived at the gate"}
+            return result("flight", f"{names[m[1]]} at {m[4][:2]}:{m[4][2:]} UTC",
+                          [f"Flight {m[2]} \u2192 {m[3]}", f"Fuel on board {float(m[5]) * 1000:,.0f} lb"])
+    if airline == "F9" and label == "4C":
+        # .N337FR,FFT4186,KDEN,KDTW,RT1138,LT0156,0156,0143, - the flight, its route and four
+        # times whose names (RT, LT) Frontier does not spell out; shown as sent.
+        m = re.match(r"\.(N\w+),(FFT\d+),(" + ICAO_AP + "),(" + ICAO_AP + r"),RT(\d{4})?,LT(\d{4})?,(\d{4})?,(\d{4})?,", text)
+        if m:
+            times = [f"{k} {v[:2]}:{v[2:]}" for k, v in (("RT", m[5]), ("LT", m[6]), ("", m[7]), ("", m[8])) if v]
+            return result("flight", f"Departure times for {m[2]}, {m[3]} \u2192 {m[4]}", [" \u00b7 ".join(times).replace("  ", " "), f"Aircraft {m[1]}"])
+    if airline == "BA" and label == "10" and text.startswith("INI"):
+        # INI0302KDENEGLL0821BENDM      CROYY  WHIRZ  --- flight plan initialisation: route, time, first fixes
+        m = re.match(r"INI\d{4}(" + ICAO_AP + ")(" + ICAO_AP + r")(\d{4})((?: *[A-Z0-9]{3,5})+)", text)
+        if m:
+            fixes = m[4].split()
+            return result("flight", f"Flight plan loaded: {m[1]} \u2192 {m[2]}" + (f" via {', '.join(fixes)}" if fixes else ""),
+                          [f"Departure {m[3][:2]}:{m[3][2:]} UTC"])
+    if airline == "AS" and label == "80":
+        m = re.match(r"3V01 ACK +(\d{4})/\d\d (" + ICAO_AP + ")/(" + ICAO_AP + r") \.(N\w+)\s+(\d+)", text)
+        if m:
+            return result("link", f"Crew acknowledged dispatch message {m[5]}", [f"Flight {m[2]} \u2192 {m[3]}"])
+    if airline == "KL" and label == "20":
+        m = re.match(r"RST(\d\d)[A-Z](\d\d)(\d\d)(\d\d)\d\d(KLM\d+) +(" + ICAO_AP + ")(" + ICAO_AP + ")", text)
+        if m:
+            return result("data", f"KLM RST report {m[1]} for {m[5]}, {m[6]} \u2192 {m[7]}", [f"At {m[3]}:{m[4]} UTC on the {int(m[2])}th"])
+    if label == "14" and text.startswith("(2"):
+        # Business aviation: (2AAAA N40563W102589 <free text to the handling agent> (Z
+        m = re.match(r"\(2[A-Z/]{3,4}N(\d{5})W(\d{6})(.*?)\(Z", text, re.S)
+        if m:
+            lat, lon = int(m[1]) / 1000, -int(m[2]) / 1000
+            words = re.sub(r"\s+", " ", m[3]).strip()
+            return result("crew", f"Message to ground handling: \u201c{words}\u201d" if words else "Message to ground handling",
+                          [latlon(lat, lon)], position={"lat": lat, "lon": lon, "src": "Label 14"})
+        if re.fullmatch(r"\(2/[A-Z]{3}", text.strip()):
+            return result("link", f"Datalink service check ({text.strip()[3:]})")
     if label == "83":
         m = re.match(r"\d{3}PR\d\d(\d{6})[NS]\d{4}\.\d[EW]\d{5}\.\d(\d{5})", text)
         if m:
