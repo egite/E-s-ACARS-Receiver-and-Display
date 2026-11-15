@@ -348,3 +348,37 @@ def test_ups_eda_ok_replies_and_named_reports():
     assert delta["summary"] == "Aircraft monitoring report 72" and delta["details"] == ["Flight KDEN Denver → KLGA New York"]
     assert translate.translate({"label": "H1", "sublabel": "DF", "flight": "DL1", "kind": "acars",
                                 "text": "221N3753247710 526183859150256369791-26-53  5 905 906685693 2823 2\r\n883 927"})["summary"] == "Aircraft monitoring report 221"
+
+
+def test_air_france_2f_position_and_jazz_landing_data():
+    r = translate.translate({"label": "2F", "flight": "AF022N", "kind": "acars",
+                             "text": "1907+4044-10342/36209\r\nLFPG/KLAX/35999/-120/ -54/0.83/242603/221610/29.0/AREAF  /JASSE  / -72/   29"})
+    assert r["summary"] == "Position report: over 40.44°N 103.42°W at 19:07 UTC, 36,209 ft"
+    assert r["details"] == ["Flight LFPG Paris → KLAX Los Angeles", "Mach 0.83, outside air -54°C (total -12.0°C)", "Passed AREAF, next JASSE"]
+    assert r["position"] == {"lat": 40.44, "lon": -103.42, "alt": 36209, "src": "Label 2F"}
+    short = translate.translate({"label": "2F", "flight": "AF069T", "kind": "acars", "text": "0048+4067-10668/39525 "})
+    assert short["position"]["lon"] == -106.68 and short["details"] == []
+    jazz = translate.translate({"label": "4s", "flight": "RV1705", "kind": "acars", "text": "CFWTL/510/LAS/26L/L/   /  /  /   /    /100/"})
+    assert jazz["category"] == "request" and jazz["summary"] == "Landing performance data requested for runway 26L at LAS"
+
+
+def test_engine_report_headers():
+    read = lambda text, sub="DF", flight="UA1": translate.translate({"label": "H1", "sublabel": sub, "flight": flight, "kind": "acars", "text": text})
+    crz = read("*CRZ5100F 0911040645M240M51034077919708000000--000000--0775078008550854386396034880355211231137P056P056", flight="DL391")
+    assert crz["summary"] == "Cruise snapshot at 04:06:45 UTC: FL340, Mach 0.779" and crz["details"] == ["Outside air -51.0°C (total -24.0°C)"]
+    fx = read("/NQAASFX.086A91041110260412 4392993CLMBN179FE2914D12201KDENKMEM707000707000\r\nGE-NEWMAN-TRIG----------09TT", flight="FX1220")
+    assert fx["summary"] == "Engine report 086A9, climb" and fx["details"] == ["Flight FX2914 (N179FE), KDEN Denver → KMEM Memphis", "Generated 04:12 UTC"]
+    ba = read("ACM966VTG-YMMU  BA21MLBAKDENEGLL121126 213CL\r\n001232SF 8086263-00GW490920\r\n 39.895  39.8934-104.51236503\r\n36503 7678254-104.5126  39.8933 32\r\n229.39 87255  67 19.1  7274   6.7  39.8934\r\n 87   0.10000111-0.0", flight="BA21ML")
+    assert ba["summary"] == "Aircraft monitoring report 966, climb"
+    assert ba["details"] == ["Flight BA21ML (G-YMMU), KDEN Denver → EGLL London", "39.89°N 104.51°W, 7,678 ft, 254 kt", "Generated 00:12:32 UTC", "Gross weight 490,920 lb"]
+    assert ba["position"] == {"lat": 39.8934, "lon": -104.5123, "src": "BA ACM report"}
+    acmf = read("ACMF230_CRUISE_20261109223457S.CSV\nACMF SNAPSHOT REPORT 2026NOV09 22:34:57\nA/C N604UX\nSWVER 27.1", sub="CF", flight="OO5689")
+    assert acmf["summary"] == "ACMF cruise snapshot report 230" and acmf["details"] == ["Aircraft N604UX", "Generated 22:34:57 UTC"]
+    e23 = read("E23C12776L383PHNLKDEN  69195801109260750ER\r\n237 184183728582860-1083")
+    assert e23["summary"] == "Engine report E23C, en route" and e23["details"] == ["Flight UA383, PHNL Honolulu, Oahu → KDEN Denver"]
+    ver = read("<01>MMH219VER 104101126133034EGLLKDEN528040\r\n 360022741826-294 52254", flight="BA219V")
+    assert ver["details"] == ["Flight BA219 (G-YMMH), EGLL London → KDEN Denver", "Generated 13:30:34 UTC"]
+    elec = read("ELEC-GVIJ09111131 2031124 149 153680599362427388005941TOFF03A79 70\r\n6489706226DENSLC0 597", flight="2I0594")
+    assert elec["summary"] == "Engine takeoff report (ELE)" and elec["details"] == ["Flight DEN Denver → SLC Salt Lake City"]
+    end = read(",\r\n:\r\n", flight="WS2201")
+    assert end["category"] == "link" and end["generic"] and end["summary"] == "End of a multi-block report (terminator only)"

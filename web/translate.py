@@ -776,7 +776,7 @@ def _signed(sign, digits, tenths=False):
 
 def weather_samples(text):
     """Returns (origin, destination, [sample dicts]) for known weather-observation formats, or None."""
-    text = re.sub(r"^#DFB", "", text)  # H1 messages carry the sublabel inline when the decoder didn't split it
+    text = re.sub(r"^#[A-Z0-9]{2}B", "", text)  # H1 messages carry the sublabel inline ("#DFB", "#10B") when the decoder didn't split it
     # Delta *WOB (one observation a message): *WOB DTW PHX 5100F DDMM HHMMSS TAT SAT FL Mach ??
     # lat (DDMMm) lon (DDDMMm) wind ddd ff. "*WOBDTWPHX5100F 0511013143M230M52336081506N40577W101246263029:"
     # read against ADS-B over 1,300 reports: position 1 km off, flight level exact, and the
@@ -1247,6 +1247,53 @@ def translate_ups_eda(text):
                   position={"lat": lat, "lon": lon, "src": "UPS EDA report"})
 
 
+def translate_engine_headers(text):
+    """Engine and airframe reports read for their header alone, plus the few numbers that are
+    plainly what they say:
+
+      *CRZ5100F 0911040645M240M51034077919708...   Delta cruise snapshot: DDMM HHMMSS, total and
+        static air temperature in tenths, flight level, Mach (the *WOB layout without the position)
+      /NQAASFX.086A91041110260412 4392993CLMBN179FE2914D12201KDENKMEM...   FedEx: report, date
+        MMDDYY, HHMM, phase, tail, flight, route
+      ACM966VTG-YMMU  BA21MLBAKDENEGLL121126 213CL / 001232SF 8086263-00GW490920 /
+        39.895  39.8934-104.51236503 / 36503 7678254-104.5126 ...   BA 777 ACMS: report, tail,
+        flight, route, date DDMMYY, phase; time, gross weight; position (four decimals), then
+        altitude and ground speed (7,678 ft and 254 kt against ADS-B 7,592 and 250)
+      ACMF230_CRUISE_20261109223457S.CSV / ACMF SNAPSHOT REPORT ... / A/C N604UX   SkyWest
+      E23C12776L383PHNLKDEN  69195801109260750ER   United: report, fleet number, flight, route, phase
+      <01>MMH219VER 104101126133034EGLLKDEN528040   BA: report, tail letters, flight, route, time"""
+    m = re.match(r"\*CRZ\d{4}[A-Z] (?:\d{4}|-{4})(\d{6}|-{6})([MP])(\d{3})([MP])(\d{3})(\d{3})(\d{3})", text)
+    if m:
+        when = f" at {hhmmss(m[1])}" if m[1].isdigit() else ""
+        return result("data", f"Cruise snapshot{when}: FL{int(m[6])}, Mach {int(m[7]) / 1000:.3f}",
+                      [f"Outside air {_signed(m[4], m[5], True):.1f}°C (total {_signed(m[2], m[3], True):.1f}°C)"])
+    m = re.match(r"/NQAASFX\.(\d{3}[A-Z]\d)\d{3}(\d{6})(\d{4}) *\d*(CLMB|DESC|CRZ|TKOF|TKO|CLB|DES|CRS)(N\d{3,5}[A-Z]{0,2})(\d{4})\w*?(" + ICAO_AP + ")(" + ICAO_AP + ")", text)
+    if m and int(m[3][:2]) < 24:
+        return result("data", f"Engine report {m[1]}, {PHASE_CODES.get(m[4], m[4].lower())}",
+                      [f"Flight FX{m[6]} ({m[5]}), {m[7]} → {m[8]}", f"Generated {m[3][:2]}:{m[3][2:]} UTC"])
+    m = re.match(r"ACM(\d{3})[A-Z]{3}(-[A-Z]{4})\s+(\w{2}\d+\w*?)[A-Z]{2}(" + ICAO_AP + ")(" + ICAO_AP + r")(\d{6}) *\d*([A-Z]{2})\s*(\d{6})SF.*?GW(\d+)", text, re.S)
+    if m:
+        details = [f"Flight {m[3]} (G{m[2]}), {m[4]} → {m[5]}", f"Generated {hhmmss(m[8])}", f"Gross weight {int(m[9]):,} lb"]
+        position = None
+        pos = re.search(r"(\d\d\.\d{4})(-?\d{2,3}\.\d{4})\d{4}\s+\d{5}\s+(\d{4,5})(\d{3})-", text)
+        if pos:
+            lat, lon = float(pos[1]), float(pos[2])
+            details.insert(1, f"{latlon(lat, lon)}, {int(pos[3]):,} ft, {int(pos[4])} kt")
+            position = {"lat": lat, "lon": lon, "src": "BA ACM report"}
+        phase = PHASE_CODES.get(m[7])
+        return result("data", f"Aircraft monitoring report {m[1]}" + (f", {phase}" if phase else ""), details, position=position)
+    m = re.match(r"ACMF(\d+)_([A-Z]+)_(\d{8})(\d{2})(\d{2})(\d{2}).*?A/C (N\w+)", text, re.S)
+    if m:
+        return result("data", f"ACMF {m[2].lower()} snapshot report {m[1]}", [f"Aircraft {m[7]}", f"Generated {m[4]}:{m[5]}:{m[6]} UTC"])
+    m = re.match(r"(E\d\dC)\d{5}L?(\d{1,4})(" + ICAO_AP + ")(" + ICAO_AP + r")\s+\d+(ER|CL|DC|CR|TO)\b", text)
+    if m:
+        return result("data", f"Engine report {m[1]}, {UNITED_PHASES.get(m[5], m[5])}", [f"Flight UA{m[2]}, {m[3]} → {m[4]}"])
+    m = re.match(r"<(\d\d)>([A-Z]{3})(\d{3})VER \d{3}(\d{6})(\d{6})(" + ICAO_AP + ")(" + ICAO_AP + ")", text)
+    if m:
+        return result("data", f"Engine report <{m[1]}> (VER)", [f"Flight BA{m[3]} (G-Y{m[2]}), {m[6]} → {m[7]}", f"Generated {hhmmss(m[5])}"])
+    return None
+
+
 def translate_named_report(text):
     """Reports whose name is all that is readable, and the OK replies to company uplinks."""
     m = re.match(r"(?:#[A-Z0-9]{2}B)?/([A-Z0-9]{5})([A-Z]{2})\.OK\b\s*(.*)", text, re.S)
@@ -1264,7 +1311,7 @@ def translate_named_report(text):
     m = re.match(r"R(\d\d)/(N\w{3,5})\d\d[A-Z]{3}\d{6}", text)
     if m:
         return result("data", f"Aircraft monitoring report R{m[1]}", [f"Aircraft {m[2]}"])
-    if re.match(r"ELE'+\d", text):
+    if re.match(r"ELE(?:'+|C-)\w*\d", text):
         route = re.search(r"\d([A-Z]{3})([A-Z]{3})\d", text)
         return result("data", "Engine takeoff report (ELE)" if "TOFF" in text else "Engine report (ELE)",
                       [f"Flight {route[1]} → {route[2]}" if route and airports.city_iata(route[1]) else None])
@@ -1414,7 +1461,7 @@ def _translate_monitoring(msg):
     if tagged:
         return tagged
     for reader in (translate_hydn, translate_pnm4, translate_delta_apm, translate_a86, translate_takeoff, translate_fd, translate_crzn,
-                   translate_crz, translate_united_engine, translate_ups_eda, translate_named_report):
+                   translate_crz, translate_united_engine, translate_ups_eda, translate_engine_headers, translate_named_report):
         report = reader(text)
         if report:
             return report
@@ -1467,7 +1514,7 @@ def _translate_monitoring(msg):
         return result("data", "Airbus aircraft monitoring report", [route_detail])
     # Report number, then the tail (N775DE, or Delta's all-digit N37532); "072A8115.N37533" is the
     # same with a configuration code between.
-    m = re.match(r"(\d{3})(?:A\d{4}\.?|[A-Z0-9]{0,6}?)N\d{1,5}[A-Z]{0,2}(?=\d|\s)", text)
+    m = re.match(r"(\d{3})(?:A\d{4}\.?|[A-Z0-9]{0,6}?)N(?:\d{1,5}[A-Z]{0,2}|DEFLT)(?=\d|\s)", text)
     if m:
         return result("data", f"Aircraft monitoring report {int(m.group(1))}",
                       [f"Flight {route[0]} → {route[1]}" if route else glued_route(text)])
@@ -2221,7 +2268,29 @@ def translate(msg, raw=None):
         return result("link", "Datalink status advisory")
     if not text:
         return result("link", f"Message with no text (label {label})")
+    if re.fullmatch(r"[\s,:/.]+", text):
+        # The last block of a long report often carries nothing but the terminator. Still
+        # generic, so the block assembler files it under the report it closes.
+        return result("link", "End of a multi-block report (terminator only)", generic=True)
 
+    if label == "2F":
+        # Air France: HHMM +lat -lon /altitude, then route / selected alt / TAT / SAT / Mach / ... / last
+        # waypoint / next waypoint. 40.44N 103.42W at 36,209 ft against ADS-B 40.42N 103.47W at 35,988.
+        m = re.match(r"(\d{4})([+-]\d{2})(\d{2})([+-]\d{3})(\d{2})/(\d{3,5})\s*(?:(" + ICAO_AP + ")/(" + ICAO_AP + r")/(\d{3,5})/ *(-?\d+)/ *(-?\d+)/(\d\.\d\d)/[^/]*/[^/]*/[^/]*/ *(\w+) */ *(\w+) */)?", text)
+        if m and int(m[1][:2]) < 24 and int(m[1][2:]) < 60:
+            lat, lon = float(f"{m[2]}.{m[3]}"), float(f"{m[4]}.{m[5]}")
+            details = [f"Flight {m[7]} → {m[8]}" if m[7] else None]
+            if m[12]:
+                details += [f"Mach {m[12]}, outside air {int(m[11])}°C (total {int(m[10]) / 10:.1f}°C)",
+                            f"Passed {m[13]}, next {m[14]}"]
+            return result("position", f"Position report: over {latlon(lat, lon)} at {m[1][:2]}:{m[1][2:]} UTC, {int(m[6]):,} ft",
+                          details, position={"lat": lat, "lon": lon, "alt": int(m[6]), "src": "Label 2F"})
+    if label == "4s" and text.startswith("CFWTL/"):
+        # Jazz (Air Canada Express): CFWTL/510/LAS/26L/L/... one request per candidate runway
+        m = re.match(r"CFWTL/(\d+)/([A-Z]{3})/(\d\d[LRC]?)/([LT])/", text)
+        if m:
+            what = "Landing" if m[4] == "L" else "Takeoff"
+            return result("request", f"{what} performance data requested for runway {m[3]} at {m[2]}")
     if label == ":;":  # ARINC 620 frequency change: the new ACARS channel in kHz
         m = re.fullmatch(r"(\d{3})(\d{3})", text.strip())
         if m:
