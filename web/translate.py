@@ -1856,6 +1856,85 @@ SOUTHWEST_LETTERS = {
 }
 
 
+# The four punctuation marks, which complete each alphabet: the decimal point (found live
+# by the coordinate reader all along), the space between words of free text, the minus
+# sign and the slash. Read off 38,000 reports on 15 November 2026 from where each sits:
+# the point between digits and before a Mach number, the space between words and after
+# the N and W of a coordinate, the minus before a temperature and in runs of dashes for
+# an unset field, the slash between wind direction and speed. With these every message
+# on the label reads in full, and the "residue" turned out to be crew text, turbulence
+# reports, maintenance write-ups and holding reports under the same substitution.
+SOUTHWEST_MARKS = {  # group: the characters standing for ". -/" in that order
+    "01": "MI2Y", "02": ")GZQ", "03": "JXA-", "04": "YHJK", "05": "BVXY",
+    "06": "MRNL", "07": "(CEF", "08": "0FB-", "09": "Y/9Z",
+}
+SOUTHWEST_TYPES = {
+    # header type: (category, name); the header reads e.g. FTD02 behind the two-digit key
+    "POS": ("position", "Position report"), "ETA": ("flight", "ETA report"), "CLB": ("flight", "Climb report"),
+    "INR": ("flight", "In-range report"), "OUT": ("flight", "Out report (left the gate)"),
+    "HLD": ("flight", "Holding report"), "FTD": ("crew", "Crew message to dispatch"),
+    "TRB": ("crew", "Turbulence report"), "ADV": ("crew", "Ride advisory"), "MXR": ("maintenance", "Maintenance write-up"),
+}
+
+
+def southwest_plain(group, text):
+    """The whole message in clear: letters, digits, separator and marks. A character the
+    alphabet lacks (a bit error, or the two or three never seen) comes out as '?'."""
+    key, letters, marks = SOUTHWEST_KEYS.get(group), SOUTHWEST_LETTERS.get(group), SOUTHWEST_MARKS.get(group, "")
+    if not key or not letters:
+        return None
+    table = {c: str(i) for i, c in enumerate(key[1])}
+    table.update(zip(*letters))
+    table.update(zip(marks, ". -/"))
+    table[key[0]] = " "
+    table.update({">": "+", "*": "*"})  # the same in every group, so not enciphered: "+/-10KTS"
+    return "".join(c if c in "\r\n" else table.get(c, "?") for c in text)
+
+
+def southwest_text(group, head, body):
+    """Everything on the label that is not a position report with coordinates: free text,
+    turbulence reports, maintenance write-ups, holding and gate reports, each with its route
+    or airport line first and the message type in the header (FTD02, TRB02, MXR03...)."""
+    kind = southwest_plain(group, head[2:5])
+    plain = southwest_plain(group, body)
+    if not kind or plain is None:
+        return None
+    lines = [l.strip() for l in plain.replace("\r", "").split("\n") if l.strip()]
+    if not lines:
+        return None
+    category, name = SOUTHWEST_TYPES.get(kind, ("data", f"Southwest {kind} report"))
+    first, rest = lines[0], lines[1:]
+    route = re.match(r"(" + ICAO_AP + ") (" + ICAO_AP + r")\b", first)
+    route_detail = f"Flight {route[1]} → {route[2]}" if route else None
+    said = ", ".join(rest).strip()
+    if kind == "FTD":
+        return result("crew", f"{name}: “{said}”" if said else name, [route_detail])
+    if kind == "TRB":
+        m = re.match(r"(?:" + ICAO_AP + " " + ICAO_AP + r" )?(\d{4,5}) (\d{3})[/ -](\d{3}) (\d) (\d)", first)
+        where = f" at {int(m[1]):,} ft" if m else ""
+        return result("crew", f"{name}{where}: “{said}”" if said else f"{name}{where}",
+                      [route_detail, f"Wind {int(m[2])}° at {int(m[3])} kt" if m else None,
+                       f"Report codes {m[4]} {m[5]}" if m else None])
+    if kind == "ADV":
+        m = re.match(r"(\d{4,5}) (\d{3})[/ -](\d{3}) (\d{3}) +(\d+\.\d) (\d{4})", first)
+        return result("crew", f"{name}{f' at {int(m[1]):,} ft' if m else ''}: “{said}”" if said else name,
+                      [f"Wind {int(m[2])}° at {int(m[3])} kt" if m else None,
+                       f"Reported {m[6][:2]}:{m[6][2:]} UTC" if m else None])
+    if kind == "MXR":
+        m = re.match(r"(" + ICAO_AP + r") (\d{4}) (\d)", first)
+        return result("maintenance", f"{name}: “{said}”" if said else f"{name} (nothing to report)",
+                      [f"At {m[1]}, {m[2][:2]}:{m[2][2:]} UTC" if m else None])
+    if kind == "HLD":
+        m = re.match(r"(\d+\.\d) (\d{4}) (\d{4,5})", said)
+        return result("flight", f"Holding at {first}" + (f", {int(m[3]):,} ft" if m else ""),
+                      [f"Fuel on board {float(m[1]) * 1000:,.0f} lb, at {m[2][:2]}:{m[2][2:]} UTC" if m else None])
+    if kind == "OUT":
+        m = re.match(r"(" + ICAO_AP + ") (" + ICAO_AP + r") (\d{4}) (\d+\.\d) ", first)
+        return result("flight", f"Left the gate at {m[3][:2]}:{m[3][2:]} UTC" if m else name,
+                      [route_detail, f"Fuel on board {float(m[4]) * 1000:,.0f} lb" if m else None])
+    return result(category, f"{name}: {' / '.join(lines)}", [route_detail] if route else None)
+
+
 def southwest_route(group, fields):
     """Origin and destination, when both decode to an airport we know."""
     key = SOUTHWEST_LETTERS.get(group)
@@ -1901,13 +1980,13 @@ def translate_southwest(msg):
             w = f[i:i + 8]
             if lat is None and coordinate(w, 2):
                 lat, point = coordinate(w, 2), w[4]
-            elif lat is not None and w[4] == point and coordinate(w, 1):
-                lon = coordinate(w, 1)
+            elif lat is not None and w[4] == point and (coordinate(w, 1) or coordinate(w, 2)):
+                lon = coordinate(w, 1) or coordinate(w, 2)  # "W 99.991": east of 100W the degrees are space-padded
                 break
         if lon:
             break
     if not (lat and lon):
-        return None
+        return southwest_text(head[:2], head, body)
     lat, lon = int(lat) / 1000, -int(lon) / 1000
     details = [southwest_route(head[:2], fields), latlon(lat, lon)]
     summary = "Position report"

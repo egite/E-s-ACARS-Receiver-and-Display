@@ -382,3 +382,41 @@ def test_engine_report_headers():
     assert elec["summary"] == "Engine takeoff report (ELE)" and elec["details"] == ["Flight DEN Denver → SLC Salt Lake City"]
     end = read(",\r\n:\r\n", flight="WS2201")
     assert end["category"] == "link" and end["generic"] and end["summary"] == "End of a multi-block report (terminator only)"
+
+
+def _southwest_cipher(group, plain):
+    """Encipher clear text with a group's alphabet, the inverse of what the reader does."""
+    sep, digits = translate.SOUTHWEST_KEYS[group]
+    table = {str(i): c for i, c in enumerate(digits)}
+    cipher, letters = translate.SOUTHWEST_LETTERS[group]
+    table.update(zip(letters, cipher))
+    table.update(zip(". -/", translate.SOUTHWEST_MARKS[group]))
+    table[" "] = sep
+    table["_"] = translate.SOUTHWEST_MARKS[group][1]  # the word space, used inside a field ("N_40.821")
+    return "".join(c if c in "\r\n" else table[c] for c in plain)
+
+
+def test_southwest_label_37_text_messages():
+    # Free text, turbulence, maintenance, holding and gate reports under the same substitution
+    # as the position reports; the word space, point, minus and slash complete each alphabet.
+    def read(group, kind, body):
+        head = group + _southwest_cipher(group, kind + "02")
+        return translate.translate_southwest({"text": head + "\r\n" + _southwest_cipher(group, body)})
+    ftd = read("02", "FTD", "KSMF KSTL\r\nHOW FAR AHD IS HE\r\n")
+    assert ftd["category"] == "crew" and ftd["summary"] == "Crew message to dispatch: “HOW FAR AHD IS HE”"
+    assert ftd["details"] == ["Flight KSMF Sacramento → KSTL St Louis"]
+    trb = read("07", "TRB", "KSLC KMDW 37000 192/031 2 0\r\nSINCE SLC\r\nOCSNL LT TURB")
+    assert trb["summary"] == "Turbulence report at 37,000 ft: “SINCE SLC, OCSNL LT TURB”"
+    assert trb["details"] == ["Flight KSLC Salt Lake City → KMDW Chicago", "Wind 192° at 31 kt", "Report codes 2 0"]
+    mxr = read("09", "MXR", "KDEN 1606 2\r\nPAX CABIN ITEM\r\n5D RCLN BUTTN INOP\r\n")
+    assert mxr["category"] == "maintenance" and mxr["summary"] == "Maintenance write-up: “PAX CABIN ITEM, 5D RCLN BUTTN INOP”"
+    assert mxr["details"] == ["At KDEN Denver, 16:06 UTC"]
+    hld = read("01", "HLD", "BGDEE          \r\n12.3 0005 20000")
+    assert hld["summary"] == "Holding at BGDEE, 20,000 ft" and hld["details"] == ["Fuel on board 12,300 lb, at 00:05 UTC"]
+    out = read("05", "OUT", "KDEN KMDW 2145 16.8 08.1 2145")
+    assert out["summary"] == "Left the gate at 21:45 UTC" and out["details"] == ["Flight KDEN Denver → KMDW Chicago", "Fuel on board 16,800 lb"]
+    assert translate.southwest_plain("03", _southwest_cipher("03", "GOOD. -53 192/031")) == "GOOD. -53 192/031"
+    # The position reports still read as before.
+    assert translate.translate_southwest({"text": "01" + _southwest_cipher("01", "POS01") + "\r\n" +
+                                          _southwest_cipher("01", "KSJC KMDW N_40.821 W_99.991 38995 245 458 .793 13.2 0935 079 264 049 -53 135080")})["position"] == \
+        {"lat": 40.821, "lon": -99.991, "src": "Southwest label 37"}
