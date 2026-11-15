@@ -420,3 +420,19 @@ def test_southwest_label_37_text_messages():
     assert translate.translate_southwest({"text": "01" + _southwest_cipher("01", "POS01") + "\r\n" +
                                           _southwest_cipher("01", "KSJC KMDW N_40.821 W_99.991 38995 245 458 .793 13.2 0935 079 264 049 -53 135080")})["position"] == \
         {"lat": 40.821, "lon": -99.991, "src": "Southwest label 37"}
+
+
+def test_business_jet_part_number_and_landing_events():
+    ami = translate.translate({"label": "88", "flight": "ZD0000", "kind": "acars",
+                               "text": "00AMI02,N39441W105439,398,*,KGJT,****,****,ZD,69003082-502   "})
+    assert ami["category"] == "data" and ami["summary"] == "Avionics part-number report"
+    assert ami["details"][0] == "39,800 ft"
+    # An ON event enciphered under key 02: two-letter event names have to pass the header check.
+    sep, digits = translate.BIZJET_KEYS["02"]
+    table = {str(i): c for i, c in enumerate(digits)}
+    table.update({p: c for c, p in zip(*translate.BIZJET_LETTERS["02"])})
+    table.update({p: c for c, p in zip(*translate.BIZJET_PUNCT["02"])})
+    table[","] = sep
+    on = "02" + "".join(table[c] for c in "ON03,N40274W105008,KGXY,KFNL,1107,1922,002.0,0007,    0")
+    r = translate.translate({"label": "44", "flight": "GS412M", "kind": "acars", "text": on})
+    assert r["category"] == "flight" and r["summary"] == "Landed: KGXY Greeley → KFNL Loveland at 19:22 UTC"

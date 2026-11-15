@@ -1628,7 +1628,7 @@ def translate_label44(msg):
     parts = [p.strip() for p in msg["text"].split(",")]
     # TWX and MSG turned up once the ciphered half of this traffic became readable: a TWX
     # carries a route and little else, a MSG is free text to or from dispatch.
-    m = re.match(r"0*(ETA|POS|OUT|OFF|ON|IN|TWX|MSG|TST|SPN)0\d$", parts[0]) if parts else None
+    m = re.match(r"0*(ETA|POS|OUT|OFF|ON|IN|TWX|MSG|TST|SPN|AMI)0\d$", parts[0]) if parts else None
     if not m or len(parts) < 5:
         return None
     event = m.group(1)
@@ -1645,13 +1645,13 @@ def translate_label44(msg):
         return result("flight" if event == "ETA" else "position", summary,
                       [level, f"ETA {hhmmss(eta)}" if eta else None,
                        f"Fuel on board {float(fuel) * 1000:,.0f} lb" if fuel else None, pos])
-    if event in ("SPN", "TST"):
+    if event in ("SPN", "TST", "AMI"):
         # SPN carries part numbers (CMF-2600-130507) after the route: the avionics software
         # loaded, sent once after takeoff. TST is a test message with a route and nothing else.
         level = feet(int(parts[2]) * 100) if parts[2].isdigit() else None
         route = f", {parts[3]} \u2192 {parts[4]}" if all(re.fullmatch(ICAO_AP, p) for p in parts[3:5]) else ""
-        return result("data" if event == "SPN" else "flight",
-                      ("Avionics software report" if event == "SPN" else "Test message") + route, [level, pos])
+        return result("flight" if event == "TST" else "data",
+                      {"SPN": "Avionics software report", "AMI": "Avionics part-number report"}.get(event, "Test message") + route, [level, pos])
     if event in ("TWX", "MSG"):
         route = [p for p in parts[3:5] if re.fullmatch(ICAO_AP, p)]
         words = [p for p in parts[5:] if re.search(r"[A-Z]{3,}", p) and not re.fullmatch(r"[\d.]+", p)]
@@ -1686,7 +1686,7 @@ def bizjet_other(msg, group, sep, digits):
         if extra:
             table = {**dict(zip(*extra)), **table}
     plain = "".join(table.get(c, "," if c == sep else "?") for c in msg["text"][2:])
-    head = re.match(r"([A-Z]{3}\d\d)(.*)", plain)
+    head = re.match(r"([A-Z]{2,3}\d\d)(.*)", plain)  # ON03 and IN03 have two letters
     if not head:
         return None
     if head.group(1) == "POA01":
