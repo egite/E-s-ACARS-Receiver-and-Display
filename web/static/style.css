@@ -232,6 +232,22 @@ input[type=search] { width: 100%; }
 .tl-summary { color: var(--text); }
 .tl-details { color: var(--muted); font-size: 11.5px; }
 .times { color: var(--muted); font-size: 11px; }
+.data-table { margin-top: 4px; font-style: normal; }
+.data-caption { color: var(--muted); font-size: 11px; }
+.data-scroll { width: fit-content; max-width: 100%; max-height: 22em; overflow: auto; border: 1px solid var(--line); border-radius: 5px; color-scheme: dark; }
+.data-table table { border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; width: max-content; }
+.data-table th, .data-table td { padding: 1px 7px; text-align: right; white-space: nowrap; }
+.data-table th {
+  position: sticky; top: 0; background: var(--panel-2); color: var(--muted); font-weight: 600;
+  border-bottom: 1px solid var(--line);
+}
+.data-table th .unit { display: block; font-weight: 400; font-size: 10px; }
+.data-table th.row-head { position: static; text-align: left; border-bottom: 0; background: none; }
+.data-table th.row-head .unit { display: inline; margin-left: 5px; }
+.data-table th.likely { color: #8491a3b0; font-style: italic; }
+.data-table td { color: var(--text); font-family: var(--mono); }
+.data-table tbody tr:nth-child(even) td { background: #ffffff06; }
+.data-note { color: var(--muted); font-size: 10.5px; margin-top: 2px; }
 .cat-atc .cat { background: #f472b633; color: #f9a8d4; }
 .cat-atc .tl-summary { color: #fbcfe8; font-weight: 600; }
 .cat-position .cat { background: #fbbf2426; color: #fcd34d; }

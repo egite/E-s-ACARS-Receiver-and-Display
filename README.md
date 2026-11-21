@@ -267,7 +267,12 @@ desktop notifications would need the page served over HTTPS.
 `web/translate.py` turns each message into a category, a one-line English summary and details. It covers
 CPDLC (via libacars), ARINC 702 flight-computer messages, many airline position/weather/OOOI formats
 (including UPS `*POS`, FedEx `PO6` and label 15 position reports), labels 44/80/4A/4T/B9/5U/QQ/SQ/SA and others. Airline monitoring reports are identified (report number,
-route, flight phase) but their numeric contents aren't publicly documented and are left untranslated.
+route, flight phase); their numeric layouts aren't publicly documented, so a field is only labelled once
+something outside the message agrees with it (physics, ADS-B, the aircraft's other fields). Reports with
+many numbers carry `tables` alongside the details, drawn as grids in the flight window and on the raw
+page; a column marked † is only *likely* (its range and behaviour fit, nothing confirms it). The Airbus
+A320-family engine cruise report A02 is read this way: per-engine N1, N2, EGT, fuel flow and the gas-path
+pressures and temperatures, each checked against the standard atmosphere and compressor thermodynamics.
 `web/server.py` reassembles multi-block reports (same message number, letter suffix).
 
 `tests/corpus.jsonl` holds ~7,500 real decoded messages for checking translation changes, e.g.:

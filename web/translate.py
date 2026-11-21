@@ -241,17 +241,48 @@ def _route(match):
     return f"{one(match.group(1))} → {one(match.group(2))}"
 
 
-def result(category, summary, details=None, generic=False, position=None):
+def result(category, summary, details=None, generic=False, position=None, tables=None):
     """generic=True marks fallback descriptions that didn't recognise the message format.
 
     position is for formats whose coordinates only appear once decoded, so parse_position
-    can't see them in the raw text; the server range-checks it before using it."""
+    can't see them in the raw text; the server range-checks it before using it.
+
+    tables is for reports that carry many numbers: a list of table() results, shown on the
+    page as a grid under the details."""
     out = {"category": category, "summary": name_airports(summary),
            "details": [name_airports(d) for d in (details or []) if d]}
     if position:
         out["position"] = position
+    tables = [t for t in (tables or []) if t and t["rows"]]
+    if tables:
+        out["tables"] = tables
     if generic:
         out["generic"] = True
+    return out
+
+
+def column(label, unit="", fmt="{}", likely=False):
+    """One table column: its heading, unit and how to print a value. likely=True marks a column
+    identified only from its range and behaviour, with nothing outside the message to check it by."""
+    return {"label": label, "unit": unit, "fmt": fmt, "likely": likely}
+
+
+def table(columns, rows, caption=None, transpose=False):
+    """A grid of numbers for the page. Each row holds one value per column; None prints blank.
+    Values are formatted here, so the page shows exactly what the translator decided.
+    transpose=True asks the page to draw columns as rows, for a few records with many fields
+    (two engines, a dozen parameters); the data are the same either way."""
+    def cell(col, v):
+        if v is None:
+            return ""
+        return col["fmt"](v) if callable(col["fmt"]) else col["fmt"].format(v)
+    out = {"columns": [{k: c[k] for k in ("label", "unit") if c[k]} | ({"likely": True} if c["likely"] else {})
+                       for c in columns],
+           "rows": [[cell(c, v) for c, v in zip(columns, row)] for row in rows]}
+    if caption:
+        out["caption"] = caption
+    if transpose:
+        out["transpose"] = True
     return out
 
 
@@ -1008,6 +1039,13 @@ def translate_tagged_weather(text):
 # median and the pairs move together at r=0.983; the first idles near 30% and the second
 # near 73%, rising to about 96 and 99 at climb power, which is fan (N1) and core (N2) on a
 # CFM56.
+# Columns shared by the sampled reports below: altitude (blank on the ground), Mach, static
+# and total air temperature, then the engine pairs (engine 1, engine 2).
+SAMPLE_COLUMNS = [column("Altitude", "ft", "{:,}"), column("Mach", "", "{:.3f}"),
+                  column("SAT", "°C", "{:.1f}"), column("TAT", "°C", "{:.1f}")]
+ENGINE_COLUMNS = {"n1a": column("N1 #1", "%", "{:g}"), "n1b": column("N1 #2", "%", "{:g}"),
+                  "n2a": column("N2 #1", "%", "{:g}"), "n2b": column("N2 #2", "%", "{:g}")}
+
 HYDN_HEAD = re.compile(r"HYDN(\d{4,5})(\d{6})(" + ICAO_AP + ")(" + ICAO_AP + r")(\d{4})")
 HYDN_ROW = re.compile(r"(-?\d+\.\d) *(\d+\.\d\d) *(\d+\.\d\d) *(\d+\.\d\d) *(\d+\.\d\d) *(-?\d+\.\d) *(-?\d+?)(0\.\d{3})"
                       r"(\d{6}) *(\d+) *(\d+\.\d) *(\d+\.\d)(\d{4})(\d{4}) *(-?\d+\.\d{3}) *(-?\d+\.\d{3})...(AIR|GND)(?:TRUE|FALSE)")
@@ -1030,7 +1068,128 @@ def translate_hydn(text):
                 f"N1 {float(first[1]):.1f}/{float(first[2]):.1f}%, N2 {float(first[3]):.1f}/{float(first[4]):.1f}%",
                 f"Hydraulic pressure A {int(first[12]):,} psi, B {int(first[13]):,} psi",
                 f"Gross weight {int(first[8]):,} lb"]
-    return result("data", f"Hydraulic monitoring report ({plural(len(rows), 'sample')}), {span}", details)
+    grid = table(SAMPLE_COLUMNS + [ENGINE_COLUMNS["n1a"], ENGINE_COLUMNS["n1b"], ENGINE_COLUMNS["n2a"], ENGINE_COLUMNS["n2b"],
+                                   column("Hyd A", "psi", "{:,}"), column("Hyd B", "psi", "{:,}"),
+                                   column("Hyd qty 1", "%", "{:.1f}", likely=True), column("Hyd qty 2", "%", "{:.1f}", likely=True),
+                                   column("Weight", "lb", "{:,}")],
+                 [[None if r[16] == "GND" else int(r[6]), float(r[7]) if r[16] == "AIR" else None, float(r[5]), float(r[0]),
+                   float(r[1]), float(r[2]), float(r[3]), float(r[4]), int(r[12]), int(r[13]), float(r[10]), float(r[11]),
+                   int(r[8])] for r in rows])
+    return result("data", f"Hydraulic monitoring report ({plural(len(rows), 'sample')}), {span}", details, tables=[grid])
+
+
+# Airbus A320-family engine cruise report A02, sent by American and United, tagged groups:
+#
+#   A02/A32002,1,1/CCN453UA,NOV14,034132,KABQ,KDEN,1741/C106,58737,5000,99,.../
+#   CEN236,33004,269,760,1221,305,I23014/CNN220,33048,.../EC010929,00007,.../EE011893,.../
+#   N11236,1237,3691,0765,0842,0252,08231/N2.../S113436,0498,1266,3910,07071,061/S2.../
+#   T1101,085,00,029,37,164,05577,N246/T2.../V1.../X1...
+#
+# A3xx gives the model (A32002 is an A320). CC: tail, date, time, route, flight number. CE
+# (and CN, a second snapshot a moment apart): total air temperature in tenths (N is minus),
+# pressure altitude, calibrated airspeed, Mach x 1000, gross weight in hundreds of pounds,
+# what is probably the centre of gravity in tenths of a percent of MAC, and the engine type,
+# I for IAE V2500 or C for CFM56. EC and EE lead with the two engine serial numbers. Then
+# one N, S and T group per engine, laid out by engine type.
+#
+# Checked on 539 reports from 14-20 November (443 IAE, 96 CFM; about half arrive with the
+# engine groups, the rest without):
+#   - Mach from the calibrated airspeed and altitude equals the reported Mach to 0.0007.
+#   - The inlet total pressure (T group) equals the standard atmosphere's total pressure at
+#     that altitude and Mach to 0.03% at the median (0.3% on CFM), and the inlet temperature
+#     equals the total air temperature to 0.3 C.
+#   - Compression: the booster exit temperature that the inlet temperature and the booster
+#     pressure ratio give under the ideal-gas law tracks the reported one at r=0.979 (0.08
+#     with the rows shuffled), and the compressor exit temperature from the booster exit and
+#     PS3 at r=0.981 (CFM, from the inlet: 0.967). The ratios, 0.99 and 0.93, are what real
+#     compressor efficiency does to the ideal.
+#   - N1 corrected to the inlet temperature tracks the engine pressure ratio at r=0.988 and
+#     corrected fuel flow at r=0.981 (CFM, against PS3: N2 0.939, fuel flow 0.940, booster
+#     exit temperature 0.916). Fuel flow is pounds per hour: 2,760 per engine at the median,
+#     an A320's cruise burn in pounds, twice it in kilograms.
+#   - Gross weight orders the models: A319 134,000 lb, A320 141,000, A321 172,000 at the
+#     median, each under its maximum.
+#   - The serials: all 133 tails always report the same pair, and no serial appears on two.
+# Marked likely, because their checks are weaker: N2 on IAE (r=0.859), EGT (0.771, 0.681),
+# the exhaust pressure (its ratio to the inlet sits 2.6% above the shared EPR figure), the
+# shared EPR/N1 figure itself (the same number for both engines, so perhaps a target), and
+# the centre of gravity, which has nothing to check it by. The fan pressure, oil and
+# vibration fields and the X groups are not read.
+A02_HEAD = re.compile(r"A02/A3(\d)(\d)\d\d,\d,\d/")
+A02_ENGINE_TYPES = {"I": "IAE V2500", "C": "CFM56"}
+STATION = {  # label, unit, format, likely - for the engine table
+    "n1": ("N1", "%", "{:.1f}", False), "n2": ("N2", "%", "{:.1f}", None), "egt": ("EGT", "°C", "{:.1f}", True),
+    "ff": ("Fuel flow", "lb/h", "{:,.0f}", False), "p2": ("Inlet P", "psia", "{:.3f}", False),
+    "t2": ("Inlet T", "°C", "{:.1f}", False), "p25": ("Booster exit P", "psia", "{:.3f}", False),
+    "t25": ("Booster exit T", "°C", "{:.1f}", False), "ps3": ("Compressor exit P", "psia", "{:.1f}", False),
+    "t3": ("Compressor exit T", "°C", "{:.1f}", False), "p5": ("Exhaust P", "psia", "{:.3f}", True)}
+# Per engine type: (group, field index, divisor) for each station value.
+A02_LAYOUTS = {
+    "I": {"n1": ("N", 3, 10), "n2": ("N", 4, 10), "egt": ("N", 2, 10), "ff": ("N", 5, 0.1), "p2": ("T", 6, 1000),
+          "t2": ("T", 7, 10), "p25": ("S", 0, 1000), "t25": ("S", 1, 10), "ps3": ("S", 2, 10), "t3": ("S", 3, 10),
+          "p5": ("S", 4, 1000), "shared": ("N", 0, 1000)},
+    "C": {"n2": ("N", 2, 10), "egt": ("N", 3, 10), "ff": ("N", 4, 0.1), "p2": ("T", 5, 1000),
+          "t25": ("S", 1, 10), "ps3": ("S", 2, 10), "t3": ("S", 3, 10), "shared": ("N", 0, 10)},
+}
+
+
+def acms_groups(text):
+    """An ACMS report's /-separated groups by their two-letter tag: {"CE": ["N236", "33004", ...]}."""
+    groups = {}
+    for part in re.sub(r"[\r\n]", "", text).split("/"):
+        if len(part) >= 2:
+            groups.setdefault(part[:2], part[2:].split(","))
+    return groups
+
+
+def acms_value(fields, i, divisor=1):
+    """Field i as a number divided by divisor, with a leading N meaning minus; None for XX or absent."""
+    m = re.fullmatch(r"(N?)(\d+)", fields[i].strip()) if i < len(fields) else None
+    if not m:
+        return None
+    v = int(m[2]) / divisor
+    return -v if m[1] else v
+
+
+def translate_a02(text):
+    head = A02_HEAD.match(text)
+    if not head:
+        return None
+    g = acms_groups(text)
+    cc, ce = g.get("CC", []), g.get("CE", [])
+    if len(cc) < 5 or len(ce) < 7:
+        return None
+    model = f"A3{head[1]}{head[2]}"
+    kind = ce[6][:1]
+    tat, alt, cas, mach, weight, cg = (acms_value(ce, i, d) for i, d in enumerate((10, 1, 1, 1000, 0.01, 10)))
+    details = [f"Flight {cc[3]} → {cc[4]}" if re.fullmatch(ICAO_AP, cc[3]) and re.fullmatch(ICAO_AP, cc[4]) else None,
+               ", ".join(filter(None, [cc[0], model, f"{A02_ENGINE_TYPES[kind]} engines" if kind in A02_ENGINE_TYPES else None])),
+               f"Generated {hhmmss(cc[2])}" if re.fullmatch(r"\d{6}", cc[2]) else None,
+               f"Calibrated airspeed {cas:.0f} kt, total air temperature {tat:.1f}°C" if cas and tat is not None else None,
+               f"Gross weight {weight:,.0f} lb" if weight else None,
+               f"Centre of gravity {cg:.1f}% MAC (likely)" if cg else None]
+    serials = [g[t][0] for t in ("EC", "EE") if g.get(t) and re.fullmatch(r"\d{6}", g[t][0])]
+    if len(serials) == 2:
+        details.append(f"Engine serials {serials[0]} and {serials[1]}")
+    layout, rows = A02_LAYOUTS.get(kind), []
+    for engine in "12":
+        if layout and all(t + engine in g for t in "NST"):
+            v = {k: acms_value(g[grp + engine], i, d) for k, (grp, i, d) in layout.items()}
+            if v["p2"] and 2 < v["p2"] < 15:  # the inlet pressure anchors the layout; anything else is a different one
+                rows.append((engine, v))
+    grid = None
+    if rows:
+        shared = rows[0][1]["shared"]
+        if shared:
+            details.append(f"{'EPR' if kind == 'I' else 'N1'} {shared:.3f}" if kind == "I" else f"N1 {shared:.1f}%")
+            details[-1] += " (likely; one figure for both engines)"
+        keys = [k for k in STATION if k in layout]
+        cols = [column("Engine")] + [column(STATION[k][0], STATION[k][1], STATION[k][2],
+                                            likely=STATION[k][3] if STATION[k][3] is not None else kind == "I")
+                                     for k in keys]
+        grid = table(cols, [[f"Engine {engine}"] + [v[k] for k in keys] for engine, v in rows], transpose=True)
+    summary = f"Engine cruise report (A02)" + (f", {feet(int(alt))}" if alt else "") + (f", Mach {mach:.3f}" if mach else "")
+    return result("data", summary, details, tables=[grid])
 
 
 # United's PNM4 performance report: header with tail, route and phase (CRS for cruise),
@@ -1038,12 +1197,17 @@ def translate_hydn(text):
 #
 #   28989 28988    85    854335++++++ 71 -31.5  -5.810.728    93    9329---00001100
 #
-# two altitudes, N1 for each engine, unknowns, static and total air temperature, a 1, Mach,
-# then fields that run together once N2 reaches 100 and are not read. Over 25,713 samples
+# two altitudes, N1 for each engine in six-wide columns, unknowns, static and total air
+# temperature, a 1, Mach, then N2 for each engine, also six wide. The columns are fixed
+# width and must be read that way: "    33    332225..." is N1 33 and 33, and an earlier
+# pattern that split on digits read the second as 3. Over 3,116 samples (11-19 November)
+# the N1 pair agrees to 0 at the median and 2 at the 99th percentile, the N2 pair to 1 at the
+# 95th; N2 idles near 74 and reaches 99-100 at climb power, as on HYDN. In 140 samples the N2
+# columns hold some other five-digit quantity and are left blank. Over 25,713 samples
 # total temperature equals static x (1 + 0.2 Mach^2) to within 0.2 C (5th-95th percentile),
 # static temperature tracks altitude at r=-0.987, and the two altitudes agree to 20 ft at
 # the median. N1 runs 32-98% between the 5th and 95th percentile, idle to climb power.
-PNM4_ROW = re.compile(r"(\d{5}) (\d{5}) +(\d+) +(\d+?)\d{4}[+\d-]{6} *\d+ +(-?\d+\.\d) +(-?\d+\.\d)1(0\.\d{3}) ")
+PNM4_ROW = re.compile(r"(\d{5}) (\d{5})([ \d]{6})([ \d]{6})[\d+]{10} *\d+ +(-?\d+\.\d) +(-?\d+\.\d)1(0\.\d{3})(?:([ \d]{6})([ \d]{6}))?")
 
 
 def translate_pnm4(text):
@@ -1061,7 +1225,10 @@ def translate_pnm4(text):
     details += [f"Mach {float(first[6]):.3f}",
                 f"Outside air {float(first[4]):.1f}\u00b0C (total {float(first[5]):.1f}\u00b0C)",
                 f"N1 {int(first[2])}/{int(first[3])}%"]
-    return result("data", f"{name} ({plural(len(rows), 'sample')}), {span}", details)
+    n2 = lambda v: int(v) if v.strip().isdigit() and int(v) <= 110 else None  # noqa: E731
+    grid = table(SAMPLE_COLUMNS + list(ENGINE_COLUMNS.values()),
+                 [[int(r[0]), float(r[6]), float(r[4]), float(r[5]), int(r[2]), int(r[3]), n2(r[7]), n2(r[8])] for r in rows])
+    return result("data", f"{name} ({plural(len(rows), 'sample')}), {span}", details, tables=[grid])
 
 
 # United's A86 report (header "A86BBSM25-H200-0003"): tail, date and time, flight, phase and
@@ -1092,7 +1259,8 @@ def translate_a86(text):
     first, last = rows[0], rows[-1]
     span = f"{int(first[0]):,} ft" + ("" if first[0] == last[0] else f" → {int(last[0]):,} ft")
     details += [f"Mach {float(first[2]):.3f}", f"Outside air {int(first[1])}°C"]
-    return result("data", f"{name} ({plural(len(rows), 'sample')}), {span}", details)
+    grid = table(SAMPLE_COLUMNS[:3], [[int(r[0]), float(r[2]), int(r[1])] for r in rows])
+    return result("data", f"{name} ({plural(len(rows), 'sample')}), {span}", details, tables=[grid])
 
 
 # United's takeoff engine reports, in two layouts:
@@ -1382,7 +1550,9 @@ def translate_delta_apm(text):
                 f"Gross weight {v['weight']:,.0f} lb" if v["weight"] else None]
     summary = "Cruise performance report" + (f", {feet(int(v['alt']))}" if v["alt"] else "") + \
               (f", Mach {v['mach']:.3f}" if v["mach"] else "")
-    return result("data", summary, details, position=position)
+    engines = table([column("Engine"), column("N1", "%", "{:.1f}"), column("Fuel flow", "lb/h", "{:,.0f}")],
+                    [[1, v["n1a"], v["ff1"]], [2, v["n1b"], v["ff2"]]]) if v["n1a"] or v["ff1"] else None
+    return result("data", summary, details, position=position, tables=[engines])
 
 
 # Report 239, a cruise snapshot sent both as an Airbus ACMS report (".../REP239,...") and in
@@ -1460,7 +1630,7 @@ def _translate_monitoring(msg):
     tagged = translate_tagged_weather(text)
     if tagged:
         return tagged
-    for reader in (translate_hydn, translate_pnm4, translate_delta_apm, translate_a86, translate_takeoff, translate_fd, translate_crzn,
+    for reader in (translate_hydn, translate_a02, translate_pnm4, translate_delta_apm, translate_a86, translate_takeoff, translate_fd, translate_crzn,
                    translate_crz, translate_united_engine, translate_ups_eda, translate_engine_headers, translate_named_report):
         report = reader(text)
         if report:

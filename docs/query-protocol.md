@@ -190,6 +190,7 @@ current translator (so it improves as the translator does, even for old messages
 | `details` | list of strings | Further facts read from it, one per item. May be empty. |
 | `position` | object | Present only for formats whose coordinates appear once decoded: `{"lat":..,"lon":..}` and sometimes `alt` (feet). |
 | `generic` | boolean | Present and `true` when the translator did not recognise the format and the summary is only a general description. |
+| `tables` | list of objects | Present only for reports that carry many numbers (engine and performance samples). Each is `{"columns":[{"label":..,"unit":..,"likely":true}],"rows":[[..]],"caption":..}`: `unit`, `likely` and `caption` appear only when set; every cell is a display string, empty when the report gave no value. `transpose` is present and `true` when the page draws the columns as rows (a few records with many fields); the data are the same. `likely` marks a column identified from its range and behaviour, with nothing outside the message to confirm it. |
 
 The translation is a best effort for human reading. For anything a program must rely on, use
 `text`, `label`, `decoded` and the structured fields.

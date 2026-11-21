@@ -241,7 +241,8 @@ function isVisibleCard(ac) {
 
 function timelineEntry(e, original) {
   const count = e.count > 1 ? ` <span class="times">×${e.count}</span>` : "";
-  const details = e.details?.length ? `<div class="tl-details">${esc(localizeTimes(e.details.join(" · "), e.ts))}</div>` : "";
+  const details = (e.details?.length ? `<div class="tl-details">${esc(localizeTimes(e.details.join(" · "), e.ts))}</div>` : "") +
+    tablesHtml(e.tables);
   return `<li class="tl cat-${e.category}" data-id="${e.id}">
     <time>${clock(e.ts, false)}</time>
     <span class="cat">${CATEGORY_NAMES[e.category] || e.category}</span>
@@ -397,7 +398,7 @@ function renderHistory(el) {
   const byId = new Map(msgs.map((m) => [m.id, m]));
   const shown = msgs.filter((m) => m.english && types.isOn(m.type) && m.ts >= cutoff);
   const entries = collapseRepeats(shown.slice(0, 300).map((m) =>
-    ({ id: m.id, ts: m.ts, category: m.english.category, summary: m.english.summary, details: m.english.details })));
+    ({ id: m.id, ts: m.ts, category: m.english.category, summary: m.english.summary, details: m.english.details, tables: m.english.tables })));
   setHtml(el, entries.map((e) => {
     // A folded group shows its most recent original; the toggle is keyed by that message id.
     const open = state.openOriginals.has(e.id);

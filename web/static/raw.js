@@ -47,7 +47,7 @@ function renderMessage(m, fresh) {
     (m.text ? `<pre class="text">${esc(m.text)}</pre>` : "") +
     (m.english ? `<div class="english">${esc(localizeTimes(m.english.summary, m.ts))}` +
       (m.english.details.length ? ` <span class="english-details">— ${esc(localizeTimes(m.english.details.join(" · "), m.ts))}</span>` : "") +
-      `</div>` : "");
+      `</div>` + tablesHtml(m.english.tables) : "");
   return li;
 }
 

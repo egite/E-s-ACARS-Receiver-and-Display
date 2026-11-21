@@ -55,6 +55,29 @@ const $ = (id) => document.getElementById(id);
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
+// The translator's number grids (english.tables): one header row, then one row per sample.
+// A column marked likely was identified from its range and behaviour only; it gets a dagger
+// and a footnote so it never reads as confirmed.
+// A transposed table (a few records with many fields) draws each column as a row instead.
+function tablesHtml(tables) {
+  return (tables || []).map((t) => {
+    const th = (c, cls = "") => `<th class="${cls}${c.likely ? " likely" : ""}">${esc(c.label)}${c.likely ? "†" : ""}` +
+      (c.unit ? `<span class="unit">${esc(c.unit)}</span>` : "") + `</th>`;
+    let head, body;
+    if (t.transpose) {
+      head = `<th></th>` + t.rows.map((r) => `<th>${esc(r[0])}</th>`).join("");
+      body = t.columns.slice(1).map((c, i) => `<tr>${th(c, "row-head")}${t.rows.map((r) => `<td>${esc(r[i + 1])}</td>`).join("")}</tr>`).join("");
+    } else {
+      head = t.columns.map((c) => th(c)).join("");
+      body = t.rows.map((r) => `<tr>${r.map((v) => `<td>${esc(v)}</td>`).join("")}</tr>`).join("");
+    }
+    const note = t.columns.some((c) => c.likely)
+      ? `<div class="data-note">† likely: identified from its range and behaviour, not checked against anything outside the message</div>` : "";
+    return `<div class="data-table">${t.caption ? `<div class="data-caption">${esc(t.caption)}</div>` : ""}` +
+      `<div class="data-scroll"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>${note}</div>`;
+  }).join("");
+}
+
 const pad = (n) => String(n).padStart(2, "0");
 function clock(ts, seconds = true) {
   const d = new Date(ts * 1000);

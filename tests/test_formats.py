@@ -452,3 +452,34 @@ def test_clear_text_stragglers_read():
     fbo = read("14", "GS0001", "(2AAAAN40563W102589SIGNATURE       N573QS   ETA 1845L.  1 PAX(Z")
     assert fbo["category"] == "crew" and fbo["position"] == {"lat": 40.563, "lon": -102.589, "src": "Label 14"}
     assert fbo["summary"] == "Message to ground handling: “SIGNATURE N573QS ETA 1845L. 1 PAX”"
+
+
+def test_airbus_a02_engine_cruise_report():
+    iae = {"label": "H1", "flight": "UA1741", "kind": "acars", "text": 'A02/A32002,1,1/CCN453UA,NOV14,034132,KABQ,KDEN,1741/C106,58737,5000,99,0010,0,0100,99,X/CEN236,33004,269,760,1221,305,I23014/CNN220,33048,269,763,1222,305/EC010929,00007,00004,73,27,27/EE011893,01185,00680,73/N11236,1237,3691,0765,0842,0252,08231/N21237,1237,3760,0766,0841,0253,08272/S113436,0498,1266,3910,07071,061/S213648,0520,1259,3917,07055,061/T1101,085,00,029,37,164,05577,N246/T2101,085,00,020,39,127,05577,N218/V103C04,00208,08000,232,115,N093/V203C04,00208,08000,240,114,N255/V3003,011,090/V4010,005,170/X100541,N000,0013,0001,N0009,N009/X200562,N000,0016,0001,N0009,N009/X3N002,0008,0000,N009,N006,0002,N000/X40000,N000,N000,0000,0000,0000/X50000,N001,N000,0000,0000,0000/X60131,W1065,N375,037,190,0148,XXXX/X70131,W1065,N375,035,190,0139,XXXX,/'}
+    r = translate.translate(iae)
+    assert r["summary"] == "Engine cruise report (A02), 33,004 ft, Mach 0.760"
+    assert "N453UA, A320, IAE V2500 engines" in r["details"]
+    assert "Gross weight 122,100 lb" in r["details"]
+    assert "Engine serials 010929 and 011893" in r["details"]
+    grid = r["tables"][0]
+    labels = [c["label"] for c in grid["columns"]]
+    assert labels[:5] == ["Engine", "N1", "N2", "EGT", "Fuel flow"]
+    assert grid["columns"][3].get("likely") and not grid["columns"][1].get("likely")
+    row = dict(zip(labels, grid["rows"][0]))
+    assert (row["Engine"], row["N1"], row["Fuel flow"], row["Inlet P"], row["Compressor exit T"]) == ("Engine 1", "76.5", "2,520", "5.577", "391.0")
+    cfm = {"label": "H1", "flight": "AA0923", "kind": "acars", "text": 'A02/A31902,1,1/CCN737US,NOV14,175139,KJAC,KDFW,0923/C106,47637,5000,XX,0010,0,0100,XX,X/CEN281,38995,244,790,1209,260,C83014/CNN280,39032,245,792,1209,260/EC645604,01713,05450,01090,73,18,06/EE779835,00674,00702,00424,73/N10830,0830,0921,6268,0237,XXXXX/N20830,0830,0922,6216,0239,XXXXX/S1XXXXX,0600,1058,4188,XXXX,027,N00/S2XXXXX,0586,1061,4206,XXXX,021,N00/T1099,100,025,39,066,04363,0143/T2099,099,018,36,068,04257,0142/V106,07,287,036,05,00,00000/V200,09,270,340,04,00,00000/V3XX,XX,XXX,XXX,XXXX/V4XX,XX,XXX,XXX,XXXX/V5XX,XX,XXX,XXX,XXXX/V6XX,XX,XXX,XXX,XXXX/V7037,080,00081,22222222222111/V8038,081,00061,22222222C22111/X100611,N000,0025,N001,00000,N002/X200664,N003,0024,N001,00000,N001/X3N003,N002,N004,N007,N013,0000,N000/X40000,N000,N001,N000,0000,0000/X5N000,N000,N001,N000,0000,0000/X61361,W1071,N407,018,196,0022,0825/X71363,W1071,N407,019,191,0026,XXXX,/'}
+    r = translate.translate(cfm)
+    assert "CFM56 engines" in r["details"][1]
+    assert [c["label"] for c in r["tables"][0]["columns"]][:4] == ["Engine", "N2", "EGT", "Fuel flow"]
+    # Without the engine groups (the first block alone) the report still reads, with no table.
+    head = dict(iae, text=iae["text"].split("/N1")[0])
+    assert "tables" not in translate.translate(head)
+
+
+def test_pnm4_reads_fixed_width_engine_columns():
+    # "    33    332225..." is N1 33 and 33; splitting on digits once read the second as 3.
+    msg = {"label": "H1", "flight": "UA0001", "kind": "acars",
+           "text": "PNM40000000KBDLKDENDESC 16621 16618    33    332225403397101  -4.0  10.010.510    75    742911-00001100 "}
+    r = translate.translate(msg)
+    assert "N1 33/33%" in r["details"]
+    assert r["tables"][0]["rows"][0][-4:] == ["33", "33", "75", "74"]
