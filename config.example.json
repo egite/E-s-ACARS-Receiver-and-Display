@@ -47,6 +47,7 @@
   "history_hours": 2,
   "aircraft_db": "AircraftDatabase.sqb",
   "archive": {"dir": "archive/messages", "retention_days": 7},
+  "query": {"host": "0.0.0.0", "port": 8687},
 
   "health": {
     "silence_minutes": {"acars": 30, "vdl2": 5},

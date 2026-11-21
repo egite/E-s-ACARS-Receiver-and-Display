@@ -46,7 +46,7 @@ git clone https://github.com/egite/E-s-ACARS-Receiver-and-Display.git ACARS && c
 ```
 
 The script installs packages, blacklists the DVB-T TV driver, builds libacars, acarsdec and dumpvdl2 into
-`third_party/`, creates `config.json` from `config.example.json`, and installs and starts three systemd
+`third_party/`, creates `config.json` from `config.example.json`, and installs and starts four systemd
 services. Re-running it is safe. Use `./install.sh --no-services` to set up without the services.
 
 Then reboot (or unplug and replug the dongles) so the TV driver blacklist takes effect, and continue below.
@@ -244,7 +244,7 @@ with a 0.5 ppm reference there is little to measure.
 ## Running
 
 ```bash
-systemctl status acars-web acars-decoder@acars acars-decoder@vdl2
+systemctl status acars-web acars-query acars-decoder@acars acars-decoder@vdl2
 journalctl -u acars-decoder@vdl2 -f              # decoder log
 sudo systemctl restart acars-web
 ```
@@ -389,6 +389,22 @@ the retention is for.
 The decoder's raw JSON is not archived — it is bulky and carries only signal metadata that is
 already on the line.
 
+### Querying the archive from another machine
+
+`acars-query` (`web/query_server.py`) answers on TCP port 8687: a program sends one line naming
+an ICAO address and a time range, and gets back every archived message for that aircraft in
+the range, one JSON object per line, with the aircraft's database entry, each message's ADS-B
+fix and today's English translation. `docs/query-protocol.md` is the full contract for whoever
+writes the client; `tools/query_client.py` is a standard-library client to copy across.
+
+```bash
+python3 tools/query_client.py 192.168.21.130 A524E1 --from 2026-11-16 --to 2026-11-17 -o a524e1.jsonl
+```
+
+It reads the archive files directly, so it runs and restarts independently of the web server.
+Change the port with `"query": {"host": "0.0.0.0", "port": 8687}` in `config.json`. There is no
+authentication: anyone who can reach the port can read the archive.
+
 ## Troubleshooting
 
 - **`usb_claim_interface error -6`** — the DVB-T driver holds the dongle. Reboot after installing (the
@@ -444,6 +460,8 @@ web/translate.py       plain-English translation and message types
 web/monitor.py         receiver health, ground stations, weather observations, stats
 web/airlines.py        airline names for flight-id prefixes (from web/airlines.json)
 web/settings.py        what the Settings page may change, validation, writing config.json
+web/query_server.py    TCP archive query service (docs/query-protocol.md)
+tools/query_client.py  reference client for it
 web/static/            the web pages
 tools/calibrate_ppm.py measure a dongle's tuning error using dumpvdl2
 tools/update_airlines.py  rebuild web/airlines.json from Wikipedia's list of airline codes

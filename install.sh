@@ -101,11 +101,11 @@ fi
 
 if [[ $INSTALL_SERVICES == 1 ]]; then
   step "Installing systemd services (user $RUN_USER)"
-  for unit in acars-decoder@.service acars-web.service; do
+  for unit in acars-decoder@.service acars-web.service acars-query.service; do
     sed "s#@PROJECT_DIR@#$PROJECT_DIR#g; s#@USER@#$RUN_USER#g" "systemd/$unit" | sudo tee "/etc/systemd/system/$unit" >/dev/null
   done
   sudo systemctl daemon-reload
-  sudo systemctl enable --now acars-web.service acars-decoder@acars.service acars-decoder@vdl2.service
+  sudo systemctl enable --now acars-web.service acars-query.service acars-decoder@acars.service acars-decoder@vdl2.service
   echo "Services running. Web page: http://$(hostname -I | awk '{print $1}'):$(python3 -c 'import json; print(json.load(open("config.json"))["http_port"])')/"
 fi
 

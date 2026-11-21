@@ -1,0 +1,20 @@
+[Unit]
+Description=ACARS/VDL2 archive query service (TCP, see docs/query-protocol.md)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@PROJECT_DIR@/web
+ExecStart=/usr/bin/python3 @PROJECT_DIR@/web/query_server.py
+Restart=always
+RestartSec=5
+# Archive scans share the CPU and disk with the live decoders; let those win.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=multi-user.target
