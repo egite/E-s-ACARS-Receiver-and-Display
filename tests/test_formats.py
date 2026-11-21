@@ -1,4 +1,7 @@
 """Clear-text formats read from structure alone, checked on real examples."""
+import json
+from pathlib import Path
+
 import translate
 
 
@@ -321,7 +324,8 @@ def test_united_engine_reports():
     assert clb["summary"] == "Engine climb report (CLB006)" and clb["details"][1] == "Generated 06:54:02 UTC"
     bldn = translate.translate({"label": "H1", "sublabel": "DF", "flight": "UA1", "kind": "acars",
                                 "text": "BLDN19136300909042611 1685 -23.50 -50.5  370060.778 150 2120002416\r\n        1CRS 065R9 000000000000KSFOKEWR1000 86.75"})
-    assert bldn["summary"] == "Engine cruise report (BLDN19), FL370, Mach 0.778" and bldn["details"][0] == "Flight KSFO San Francisco → KEWR Newark"
+    assert bldn["summary"] == "Bleed air report (BLDN), 37,006 ft, Mach 0.778" and bldn["details"][0] == "Flight KSFO San Francisco → KEWR Newark"
+    assert "Aircraft N19136, flight 2416" in bldn["details"]
     crz = translate.translate({"label": "H1", "sublabel": "DF", "flight": "UA2201", "kind": "acars",
                                "text": "CRZ01144482201KDENKJAC1101260137061280\r\n297785030015N126111960N41200000N0045N0000000N000000400000905210473.\r\n1234"})
     assert crz["summary"] == "Cruise performance report (CRZ01)" and crz["details"] == ["Flight KDEN Denver → KJAC Jackson", "Recorded 01:37 UTC"]
@@ -483,3 +487,57 @@ def test_pnm4_reads_fixed_width_engine_columns():
     r = translate.translate(msg)
     assert "N1 33/33%" in r["details"]
     assert r["tables"][0]["rows"][0][-4:] == ["33", "33", "75", "74"]
+
+
+def test_bldn_bleed_air_report():
+    msg = {"label": "H1", "flight": "UA1149", "kind": "acars", "text": 'BLDN1712614110525++++  969 -26.50 -54.4  370040.798 524 2053201149\r\n        1CRS 055R9 000000000000KSFOKEWR3000 86.75 86.1900011 28.06 28\r\n.91  37002CRS 00000NORMNORM1.5961.595  259  307RUN RUN NORM724BNORM.2500011 28.06 2\r\n8.91  37002CRS 00000NORMNORM1.5991.597  259  308RUN RUN NORM724BNORMP\r\nCOTUNDRTEMP    NORMALNORMAL 86.94 86.3100011 28.16 28.97  37002CRS 00\r\n000NORMNORM1.6011.598  259  308RUN RUN NORM724BNORMPCOTUNDRTEMP    NO\r\nRMALNORMAL 86.81 86.2500011 28.09 28.91  37001CRS 00000NORMNORM1.5981\r\n.598  259  308RUN RUN NORM724BNORMPCOTUNDRTEMP    NORMALNORMAL 86.81 \r\n86.3100011 28.00 28.91  37000CRS 00000NORMNORM1.5981.598  259  307RUN\r\n RUN NORM724BNORMPCOTUNDRTEMP    NORMALNORMAL 86.81 86.2500011 28.03 \r\n28.91  37002CRS 00000NORMNORM1.5991.598  259  307RUN RUN NORM724BNORM\r\nPCOTUNDRTEMP    NORMALNORMAL'}
+    r = translate.translate(msg)
+    assert r["summary"] == "Bleed air report (BLDN): precooler outlet under-temperature (4 samples), 37,004 ft, Mach 0.798"
+    assert "Aircraft N17126, flight 1149" in r["details"]
+    grid = r["tables"][0]
+    assert [c["label"] for c in grid["columns"]][5:9] == ["Duct P #1", "Duct P #2", "Precooler out T #1", "Precooler out T #2"]
+    assert grid["rows"][0][:5] == ["37,002", "86.94", "86.31", "1.601", "1.598"]
+    assert grid["rows"][0][-1] == "precooler outlet under-temperature"
+
+
+def test_a53a_reads_times_and_temperatures():
+    msg = {"label": "H1", "flight": "WN1785", "kind": "acars", "text": 'A53A\r\nN8841L 1411211234471501\r\n17859KMCOKDENESBSM23-H200-0005\r\n60A959\r\n60A965\r\n 91.4 98.319.419.8  192112\r\n 91.4 97.6  593059  3720.517.9  6 40  50  72  202113\r\n 72.9 94.130553066  3717.118.5 77 69  83  82 -552324\r\n 70.7 92.730613072  5616.818.3 78 69  80  79 -560017\r\n'}
+    r = translate.translate(msg)
+    assert r["summary"] == "Aircraft monitoring report A53A (4 samples)"
+    assert r["details"][:2] == ["Flight KMCO Orlando → KDEN Denver", "Aircraft N8841L"]
+    grid = r["tables"][0]
+    assert grid["rows"][0] == ["21:12", "19", "", ""]
+    assert grid["rows"][-1] == ["00:17", "-56", "3,061", "3,072"]
+    assert grid["columns"][2]["likely"]
+    # A tail run into the date: the first valid DDMMHHMM ends it.
+    glued = {"label": "H1", "flight": "UA1272", "kind": "acars", "text": 'A53A\r\n N4734019111150  91 366\r\n12724KSFOKSFOESBSM25-H200-0003\r\n60B646\r\n60B654\r\n 91.4 89.219.620.7  131150\r\n 91.6 75.630192966  3719.115.4  - 61  1-  34  361616\r\n 71.9 82.130683094  3718.118.7 68 75  83  84 -581752\r\n 68.2 78.630693098  3718.018.7 67 76  83  83 -631831\r\n'}
+    assert "Aircraft N47340" in translate.translate(glued)["details"]
+
+
+def test_a02_in_the_airbus_wrapper():
+    msg = {"label": "H1", "flight": "UA1184", "kind": "acars", "text": 'A320,092169,1,1,TB000000/REP002,01,01,4/CCN485UA,NOV14,040033,KMSN,KDEN,1184/C0SI055032320006/C106,21037,5000,09,0010,0,0100,09,X/CEN219,34013,275,791,1237,258,I22032/CNN211,33996,274,791,1237,258/EC011059,69983,30494,73,06,06/EE010388,02304,01302,73/N11285,1285,3881,0789,0856,0270,08288/N21285,1285,3988,0788,0852,0272,08134/S113500,0571,1301,4102,07216,064/S213712,0575,1305,4169,07207,063/T1098,084,00,027,40,156,05471,N202/T2099,084,00,021,41,148,05477,N212/V103D04,00208,08000,254,110,----/V203D04,00208,08000,240,112,----/V3002,003,200/V4008,001,276/X100777,0000,0014,0003,00002,0006/X200815,N000,0013,0003,00001,0006/X30013,0020,N012,N005,N008,0008,0000/X40000,0000,N000,0000,0000,0000/X50000,N000,0000,0000,0000,0000/X62613,W0960,N418,062,330,N007,0830/X72613,W0960,N418,061,329,N007,0824/:'}
+    r = translate.translate(msg)
+    assert r["summary"] == "Engine cruise report (A02), 34,013 ft, Mach 0.791"
+    assert "N485UA, A320, IAE V2500 engines" in r["details"]
+    assert r["tables"][0]["rows"][0][:2] == ["Engine 1", "78.9"]
+
+
+def test_a37_climb_samples_with_iae_engines():
+    msg = {"label": "H1", "flight": "UA1022", "kind": "acars", "text": 'A37/A31937,1,1/C1N820UA,NOV14,034340,KDEN,KSAT,1022/C29000,I73014,51,012147,011811/C30160,0095,08052,343,1315,034240/C40177,0110,08207,345,1316,034245/C50180,0110,08329,354,1315,034250/C60182,0107,08465,364,1314,034255/C70182,0105,08640,371,1314,034300/C80180,0100,08838,374,1314,034305/C90175,0092,09046,382,1314,034310/C00175,0087,09205,393,1313,034315/E10175,0085,09356,403,1313,034320/E20175,0080,09508,412,1312,034325/E30175,0075,09652,422,1312,034330/E40175,0070,09787,432,1312,034335/E50846,0913,1334,1,1,1/5E0847,0910,1333,1,1,0/E60845,0912,1327,1,1,1/6E0848,0910,1327,1,1,0/E70846,0913,1327,1,1,1/7E0848,0911,1327,1,1,0/E80850,0916,1330,1,1,1/8E0851,0913,1329,1,1,0/E90852,0918,1332,1,1,1/9E0853,0914,1332,1,1,0/E00853,0917,1333,1,1,1/0E0855,0915,1333,1,1,0/N10855,0918,1338,1,1,1/1N0857,0916,1337,1,1,0/N20857,0919,1340,1,1,1/2N0860,0917,1341,1,1,0/N30860,0921,1344,1,1,1/3N0862,0919,1343,1,1,0/N40860,0920,1345,1,1,1/4N0862,0918,1344,1,1,0/N50859,0920,1344,1,1,1/5N0861,0917,1343,1,1,0/N60857,0919,1341,1,1,1/6N0860,0917,1343,1,1,0/N70,0,1/7N0,0,1/N80,0,1/8N0,0,1/N90,0,1/9N0,0,1/N00,0,1/0N0,0,1/S10,0,1/1S0,0,1/S20,0,1/2S0,0,1/S30,0,1/3S0,0,1/S40,0,1/4S0,0,1/S50,0,1/5S0,0,1/S60,0,1/6S0,0,1/S70,0,1/7S0,0,1/S80,0,1/8S0,0,1/S9099,0044,185/9S094,0045,186/S0098,0044,186/0S094,0045,186/T1098,0044,186/1T094,0045,186/T2099,0044,186/2T094,0045,186/T3099,0044,186/3T095,0045,186/T4098,0044,187/4T094,0045,187/T5099,0044,186/5T095,0045,187/T6099,0044,187/6T095,0045,187/T7099,0044,187/7T096,0045,187/T8100,0044,187/8T096,0045,187/T9100,0044,187/9T096,0045,187/T0100,0044,188/0T096,0045,187/V10,0,0/V20,0,0/V30,0,0/V40,0,0/V50,0,0/V60,0,0/V70,0,0/V80,0,0/V90,0,0/V00,0,0/C10,0,0/C20,0,0/'}
+    r = translate.translate(msg)
+    assert r["summary"] == "Performance report (A37, 12 samples, climbing 8,052 → 9,787 ft)"
+    assert r["details"][:2] == ["Flight KDEN Denver → KSAT San Antonio", "N820UA, A319, IAE V2500 engines"]
+    grid = r["tables"][0]
+    assert [c["label"] for c in grid["columns"]][-6:] == ["N1 #1", "N1 #2", "N2 #1", "N2 #2", "EPR #1", "EPR #2"]
+    assert grid["rows"][0] == ["03:42:40", "8,052", "0.343", "9.5", "16.0", "131,500", "84.6", "84.7", "91.3", "91.0", "1.334", "1.333"]
+
+
+def test_weather_profile_and_trip_report_tables():
+    msgs = [json.loads(l) for l in open(Path(__file__).parent / "corpus.jsonl")]
+    weather = [r for r in map(translate.translate, msgs) if r["summary"].startswith("Weather observations (") and r.get("tables")]
+    assert weather and all(len(r["tables"][0]["rows"]) >= 2 for r in weather)
+    assert [c["label"] for c in weather[0]["tables"][0]["columns"]][:5] == ["Time", "Position", "Altitude", "Outside air", "Wind"]
+    trip = {"label": "H1", "kind": "acars", "text": "TRP KSNA KORD  7 4\r\n/A1 005634  37.8666 -105.3102 390 140.0 451 0.000000\r\n"
+                                                    "/A2 005934  38.0506 -104.8206 390 139.8 448 0.000000\r\n"}
+    r = translate.translate(trip)
+    assert r["tables"][0]["rows"] == [["00:56:34", "37.87°N 105.31°W", "FL390"], ["00:59:34", "38.05°N 104.82°W", "FL390"]]

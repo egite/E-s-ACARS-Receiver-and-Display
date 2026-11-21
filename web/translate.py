@@ -11,6 +11,8 @@ described by what kind of message it is, and the original text stays available.
 message_type(msg) files each message under one entry of MESSAGE_TYPES (per source), which is
 what the "Message types" dialog lets people pick from.
 """
+import collections
+
 import airports
 import re
 
@@ -924,6 +926,25 @@ def weather_samples(text):
     return None
 
 
+def hhmm(t):
+    """"1412" or "141230" as 14:12 / 14:12:30; None when absent."""
+    return f"{t[:2]}:{t[2:4]}" + (f":{t[4:6]}" if len(t) >= 6 else "") if t and t[:4].isdigit() else None
+
+
+POSITION_COLUMN = column("Position", fmt=lambda p: latlon(*p))
+
+
+def weather_table(samples):
+    """Every sample of a weather profile, from the fields weather_samples already reads."""
+    if len(samples) < 2:
+        return None
+    mach = any(s.get("mach") for s in samples)
+    cols = [column("Time", "UTC"), POSITION_COLUMN, column("Altitude", "ft", "{:,}"), column("Outside air", "°C", "{:.1f}"),
+            column("Wind", "°/kt", lambda w: f"{w[0]:03d}/{w[1]}")] + ([column("Mach", "", "{:.3f}")] if mach else [])
+    return table(cols, [[hhmm(s.get("time")), (s["lat"], s["lon"]), s["alt"], s["temp"], (s["wdir"], s["wspd"])]
+                        + ([s.get("mach")] if mach else []) for s in samples])
+
+
 def translate_weather(msg):
     found = weather_samples(msg["text"])
     m = re.match(r"A3M\d{7}([A-Z]{3}) ([A-Z]{3})", msg["text"]) if not found else None
@@ -950,7 +971,8 @@ def translate_weather(msg):
                    f"wind {last['wdir']:03d}° at {last['wspd']} kt" + (f", Mach {last['mach']:.3f}" if last.get("mach") else "") +
                    f", at {latlon(last['lat'], last['lon'])}")
     return result("data", summary, details, position={"lat": round(last["lat"], 4), "lon": round(last["lon"], 4),
-                                                       "src": "Weather report"} if len(samples) == 1 else None)
+                                                       "src": "Weather report"} if len(samples) == 1 else None,
+                  tables=[weather_table(samples)])
 
 
 # ------------------------------------------------- aircraft monitoring reports
@@ -968,18 +990,29 @@ def translate_trip_report(text):
     if hashed:
         t, lat, lon, level = hashed[-1]
         return result("data", f"Automated trip report (FL{int(level)} at {hhmmss(t)})",
-                      [f"Position {latlon(float(lat), float(lon))}"])
+                      [f"Position {latlon(float(lat), float(lon))}"], tables=[trip_table(hashed)])
     m = re.search(r"TRP (" + ICAO_AP + ") (" + ICAO_AP + ")", text)
     if not m:
         return None
-    rows = re.findall(r"/A\d+ (\d{6}), *(-?\d+\.\d+), *(-?\d+\.\d+), *(\d{3}),", text)
+    # Fields separated by commas ("/A1 003058, 38.2482,-107.9395,350,") or spaces ("/A1 005634  37.8666 -105.3102 390 ").
+    # The spaced form went unread until 21 November; on 20 November its last sample sat 1.2 km
+    # from the ADS-B fix and 12 ft from its altitude (8 reports within 3 minutes of a fix).
+    rows = re.findall(r"/A\d+ (\d{6}),? +(-?\d+\.\d+)(?:, *| +)(-?\d+\.\d+)(?:, *| +)(\d{3})[, ]", text)
     details = [f"Flight {m.group(1)} → {m.group(2)}"]
     summary = "Automated trip report"
     if rows:
         t, lat, lon, level = rows[-1]
         summary += f" ({plural(len(rows), 'sample')}, latest FL{int(level)} at {hhmmss(t)})"
         details.append(f"Latest position {latlon(float(lat), float(lon))}")
-    return result("data", summary, details)
+    return result("data", summary, details, tables=[trip_table(rows)])
+
+
+def trip_table(rows):
+    """(HHMMSS, lat, lon, flight level) per trip-report sample, as a table when there are several."""
+    if len(rows) < 2:
+        return None
+    return table([column("Time", "UTC"), POSITION_COLUMN, column("Flight level", "", "FL{}")],
+                 [[hhmm(t), (float(lat), float(lon)), int(level)] for t, lat, lon, level in rows])
 
 
 def translate_performance_table(text):
@@ -1043,8 +1076,8 @@ def translate_tagged_weather(text):
 # and total air temperature, then the engine pairs (engine 1, engine 2).
 SAMPLE_COLUMNS = [column("Altitude", "ft", "{:,}"), column("Mach", "", "{:.3f}"),
                   column("SAT", "°C", "{:.1f}"), column("TAT", "°C", "{:.1f}")]
-ENGINE_COLUMNS = {"n1a": column("N1 #1", "%", "{:g}"), "n1b": column("N1 #2", "%", "{:g}"),
-                  "n2a": column("N2 #1", "%", "{:g}"), "n2b": column("N2 #2", "%", "{:g}")}
+ENGINE_COLUMNS = {"n1a": column("N1 #1", "%", "{:.2f}"), "n1b": column("N1 #2", "%", "{:.2f}"),
+                  "n2a": column("N2 #1", "%", "{:.2f}"), "n2b": column("N2 #2", "%", "{:.2f}")}
 
 HYDN_HEAD = re.compile(r"HYDN(\d{4,5})(\d{6})(" + ICAO_AP + ")(" + ICAO_AP + r")(\d{4})")
 HYDN_ROW = re.compile(r"(-?\d+\.\d) *(\d+\.\d\d) *(\d+\.\d\d) *(\d+\.\d\d) *(\d+\.\d\d) *(-?\d+\.\d) *(-?\d+?)(0\.\d{3})"
@@ -1115,7 +1148,9 @@ def translate_hydn(text):
 # shared EPR/N1 figure itself (the same number for both engines, so perhaps a target), and
 # the centre of gravity, which has nothing to check it by. The fan pressure, oil and
 # vibration fields and the X groups are not read.
-A02_HEAD = re.compile(r"A02/A3(\d)(\d)\d\d,\d,\d/")
+# Sent bare ("A02/A32002,1,1/CC...") or in Airbus's report wrapper ("A320,092169,1,1,TB000000/
+# REP002,01,01,4/CC..."), with the same body from CC on.
+A02_HEAD = re.compile(r"(?:A02/A3(\d)(\d)\d\d,\d,\d|A3(\d)(\d),\d{6},\d,\d,TB\d+\s*/REP002,[^/]*)/")
 A02_ENGINE_TYPES = {"I": "IAE V2500", "C": "CFM56"}
 STATION = {  # label, unit, format, likely - for the engine table
     "n1": ("N1", "%", "{:.1f}", False), "n2": ("N2", "%", "{:.1f}", None), "egt": ("EGT", "°C", "{:.1f}", True),
@@ -1131,6 +1166,65 @@ A02_LAYOUTS = {
     "C": {"n2": ("N", 2, 10), "egt": ("N", 3, 10), "ff": ("N", 4, 0.1), "p2": ("T", 5, 1000),
           "t25": ("S", 1, 10), "ps3": ("S", 2, 10), "t3": ("S", 3, 10), "shared": ("N", 0, 10)},
 }
+
+
+# Airbus A320-family report A37 (bare, "A37/A31937,1,1/...", or wrapped as REP037), mostly a
+# climb: an identity group, an engine group, twelve flight-condition samples five seconds
+# apart, then a pair of engine groups per sample:
+#
+#   C1N820UA,NOV14,034340,KDEN,KSAT,1022/C29000,I73014,51,.../
+#   C30160,0095,08052,343,1315,034240/C4.../.../E4.../      TAT, SAT, altitude, Mach, weight, time
+#   E50846,0913,1334,1,1,1/5E0847,0910,1333,1,1,0/E6...     engine 1 and 2: N1, N2, EPR, flags
+#
+# Checked on 706 reports from 14-20 November: Mach from the two temperatures equals the
+# reported Mach to 0.0004 at the median (3,668 samples with both); the last sample's altitude,
+# carried forward at the report's own climb rate to the moment of the ADS-B fix (72 s later
+# at the median), lands 96 ft from it; weight orders the models as in A02 (A319 133,000 lb,
+# A320 142,000, A321 172,000). On IAE engines (I) N2 against N1, both corrected to the total
+# temperature, traces the spool line at r=0.997 and N1 tracks EPR at r=0.967 (both 0.00
+# shuffled). The A321neo engine groups (W) hold two other numbers per engine that are not
+# read: they are not two shaft speeds (r=-0.05 corrected), and read as fuel flow they
+# predict twice the weight the samples lose. 89 reports in a shorter layout are not read.
+A37_HEAD = re.compile(r"(?:A37/A3(\d)(\d)\d\d,\d,\d|A3(\d)(\d),\d{6},\d,\d,TB\d+\s*/REP037,[^/]*)/")
+A37_SAMPLE_TAGS = ["C3", "C4", "C5", "C6", "C7", "C8", "C9", "C0", "E1", "E2", "E3", "E4"]
+
+
+def translate_a37(text):
+    head = A37_HEAD.match(text)
+    if not head:
+        return None
+    parts = [(p[:2], p[2:].split(",")) for p in re.sub(r"[\r\n]", "", text)[head.end():].split("/") if len(p) >= 2]
+    if [t for t, _ in parts[:14]] != ["C1", "C2"] + A37_SAMPLE_TAGS or len(parts[0][1]) < 6:
+        return None
+    c1, c2 = parts[0][1], parts[1][1]
+    kind = c2[1][:1] if len(c2) > 1 else ""
+    model = f"A3{head[1] or head[3]}{head[2] or head[4]}"
+    engines = parts[14:38] if kind == "I" else []
+    rows = []
+    for i, (_, f) in enumerate(parts[2:14]):
+        if len(f) < 6:
+            continue
+        row = [hhmm(f[5]) if re.fullmatch(r"\d{6}", f[5]) else None, acms_value(f, 2), acms_value(f, 3, 1000),
+               acms_value(f, 1, 10), acms_value(f, 0, 10), acms_value(f, 4, 0.01)]
+        if len(engines) == 24:
+            e1, e2 = engines[2 * i][1], engines[2 * i + 1][1]
+            row += [acms_value(e1, 0, 10), acms_value(e2, 0, 10), acms_value(e1, 1, 10), acms_value(e2, 1, 10),
+                    acms_value(e1, 2, 1000), acms_value(e2, 2, 1000)]
+        rows.append(row)
+    cols = [column("Time", "UTC"), column("Altitude", "ft", "{:,.0f}"), column("Mach", "", "{:.3f}"),
+            column("SAT", "°C", "{:.1f}"), column("TAT", "°C", "{:.1f}"), column("Weight", "lb", "{:,.0f}")]
+    if len(engines) == 24:
+        cols += [column(f"{name} #{n}", unit, fmt) for name, unit, fmt in (("N1", "%", "{:.1f}"), ("N2", "%", "{:.1f}"),
+                                                                           ("EPR", "", "{:.3f}")) for n in (1, 2)]
+    alts = [r[1] for r in rows if r[1] is not None]
+    trend = ("climbing " if alts[-1] > alts[0] + 500 else "descending " if alts[-1] < alts[0] - 500 else "") if alts else ""
+    span = (f"{alts[0]:,.0f} → {alts[-1]:,.0f} ft" if trend else f"{alts[-1]:,.0f} ft") if alts else ""
+    details = [f"Flight {c1[3]} → {c1[4]}" if airports.city(c1[3]) and airports.city(c1[4]) else None,
+               ", ".join(filter(None, [c1[0] if re.fullmatch(r"[A-Z0-9-]{3,8}", c1[0]) else None, model,
+                                       "IAE V2500 engines" if kind == "I" else None])),
+               f"Generated {hhmmss(c1[2])}" if re.fullmatch(r"\d{6}", c1[2]) else None]
+    return result("data", f"Performance report (A37, {plural(len(rows), 'sample')}" + (f", {trend}{span})" if span else ")"),
+                  details, tables=[table(cols, rows)])
 
 
 def acms_groups(text):
@@ -1159,7 +1253,7 @@ def translate_a02(text):
     cc, ce = g.get("CC", []), g.get("CE", [])
     if len(cc) < 5 or len(ce) < 7:
         return None
-    model = f"A3{head[1]}{head[2]}"
+    model = f"A3{head[1] or head[3]}{head[2] or head[4]}"
     kind = ce[6][:1]
     tat, alt, cas, mach, weight, cg = (acms_value(ce, i, d) for i, d in enumerate((10, 1, 1, 1000, 0.01, 10)))
     details = [f"Flight {cc[3]} → {cc[4]}" if re.fullmatch(ICAO_AP, cc[3]) and re.fullmatch(ICAO_AP, cc[4]) else None,
@@ -1226,7 +1320,8 @@ def translate_pnm4(text):
                 f"Outside air {float(first[4]):.1f}\u00b0C (total {float(first[5]):.1f}\u00b0C)",
                 f"N1 {int(first[2])}/{int(first[3])}%"]
     n2 = lambda v: int(v) if v.strip().isdigit() and int(v) <= 110 else None  # noqa: E731
-    grid = table(SAMPLE_COLUMNS + list(ENGINE_COLUMNS.values()),
+    whole = [dict(c, fmt="{}") for c in ENGINE_COLUMNS.values()]  # PNM4 gives whole percents
+    grid = table(SAMPLE_COLUMNS + whole,
                  [[int(r[0]), float(r[6]), float(r[4]), float(r[5]), int(r[2]), int(r[3]), n2(r[7]), n2(r[8])] for r in rows])
     return result("data", f"{name} ({plural(len(rows), 'sample')}), {span}", details, tables=[grid])
 
@@ -1382,14 +1477,110 @@ def translate_united_engine(text):
         kind = "climb" if m[1] == "CLB" else "cruise"
         return result("data", f"Engine {kind} report ({m[1]}{m[2]})",
                       [f"Flight {m[4]} ({m[3]}), {m[7]} → {m[8]}", f"Generated {hhmmss(m[6])}"])
-    m = re.match(r"BLDN(\d\d).*?(-?\d+\.\d\d) +(-?\d+\.\d) +(\d{3})\d\d(0\.\d{3})", text, re.S)
-    if m:
-        return result("data", f"Engine cruise report (BLDN{m[1]}), FL{int(m[4])}, Mach {float(m[5]):.3f}",
-                      [glued_route(text), f"Outside air {float(m[3]):.1f}°C (total {float(m[2]):.1f}°C)"])
     m = re.match(r"(A5\dA)\r?\n(?:[^\r\n]*\r?\n)?.*?(N\d{3,5}[A-Z]{0,2})", text, re.S)
     if m and "BSM" in text:
         return result("data", f"Engine monitoring report {m[1]}", [glued_route(text), f"Aircraft {m[2]}"])
     return None
+
+
+# United's 757 bleed-air report BLDN (it was read as an engine report numbered by the first
+# two digits of the tail until 21 November). A header, then samples:
+#
+#   BLDN1712614110525++++  969 -26.50 -54.4  370040.798 524 2053201149
+#    86.75 86.1900011 28.06 28.91  37002CRS 00000NORMNORM1.5961.595  259  307RUN RUN NORM724BNORMPCOTUNDRTEMP    NORMALNORMAL
+#
+# Header: the tail's digits (N17126), total and static air temperature, altitude, Mach,
+# gross weight, flight number (climb reports give a four-digit altitude). Cruise sample: N1 and EPR for each engine, the two bleed duct
+# pressures, altitude, phase, the two precooler outlet temperatures, and a twelve-letter
+# trigger naming why the sample was taken. Checked on 43 reports (295 samples), 14-20 Nov:
+#   - the tail is the message's registration in 43 of 43, the flight its flight in 42
+#   - Mach from the two temperatures equals the reported Mach to 0.0004
+#   - sample altitude is ADS-B's to 10 ft at the median; weight runs 175,000-244,000 lb
+#   - N1 corrected to the total temperature tracks EPR at r=0.985 (RB211s are EPR engines)
+#   - the triggers name the fields: on DUCTPRESSPLT (duct pressure split) the two duct
+#     pressures differ by 15.7 psi at the median against 0.9 otherwise; on PCOTUNDRTEMP
+#     (precooler outlet under temperature) the lower temperature reads 258 against 312+
+#     otherwise, which is an under-temperature only in Fahrenheit.
+# Climb reports lay their samples out differently, with valve states (CLSON ON ON ON), and
+# those samples are not read.
+BLDN_HEAD = re.compile(r"BLDN(\d{5})\d{8}[+ \d]{4} *-?\d+ +(-?\d+\.\d\d) +(-?\d+\.\d) +(\d{4,5})(0\.\d{3}) *\d+ +(\d{6})(\d{4})")
+BLDN_ROW = re.compile(r"(\d+\.\d\d) *(\d+\.\d\d)\d{5} *(-?\d+\.\d\d) *(-?\d+\.\d\d) +(-?\d{3,5})[A-Z][A-Z0-9 ]{3}\d{5}[A-Z]{8}"
+                      r"(\d\.\d{3})(\d\.\d{3}) *(-?\d+|/+) *(-?\d+|/+)[A-Z0-9 ]{20}([A-Z][A-Z ]{11})")
+BLDN_TRIGGERS = {"PCOTUNDRTEMP": "precooler outlet under-temperature", "DUCTPRESSPLT": "duct pressure split",
+                 "NORMCRS MODE": "routine cruise sample", "NORMDESCMODE": "routine descent sample"}
+
+
+def translate_bldn(text):
+    flat = re.sub(r"#\w\wB|[\r\n]", "", text)
+    if not flat.startswith("BLDN"):
+        return None
+    head, rows = BLDN_HEAD.match(flat), BLDN_ROW.findall(flat)
+    if not head and not rows:
+        return None
+    details = [glued_route(flat)]
+    summary = "Bleed air report (BLDN)" + (f" ({plural(len(rows), 'sample')})" if rows else "")
+    if head:
+        details += [f"Aircraft N{head[1]}, flight {int(head[7])}",
+                    f"Outside air {float(head[3]):.1f}°C (total {float(head[2]):.2f}°C)",
+                    f"Gross weight {int(head[6]):,} lb"]
+        summary += f", {feet(int(head[4]))}, Mach {float(head[5]):.3f}"
+    triggers = collections.Counter(r[9].strip() for r in rows)
+    if triggers:
+        top = triggers.most_common(1)[0][0]
+        summary = summary.replace("(BLDN)", f"(BLDN): {BLDN_TRIGGERS.get(top, top.lower())}")
+    trig = column("Trigger", fmt=lambda t: BLDN_TRIGGERS.get(t.strip(), t.strip().lower()))
+    grid = table([column("Altitude", "ft", "{:,}"), ENGINE_COLUMNS["n1a"], ENGINE_COLUMNS["n1b"],
+                  column("EPR #1", "", "{:.3f}"), column("EPR #2", "", "{:.3f}"),
+                  column("Duct P #1", "psi", "{:.2f}"), column("Duct P #2", "psi", "{:.2f}"),
+                  column("Precooler out T #1", "°F"), column("Precooler out T #2", "°F"), trig],
+                 [[int(r[4]), float(r[0]), float(r[1]), float(r[5]), float(r[6]), float(r[2]), float(r[3]),
+                   *(None if t.startswith("/") else int(t) for t in r[7:9]), r[9]] for r in rows])
+    return result("data", summary, details, tables=[grid])
+
+
+# Boeing 737 report A53A (software ESBSM22/23/25), from Southwest, United, American, WestJet
+# and Copa: tail and DDMMHHMM, flight and route, two code lines, then a first row and up to
+# three more, each ending in a temperature and the time HHMM:
+#
+#   N8841L 1411211234471501 / 17859KMCOKDENESBSM23-H200-0005 / 60A959 / 60A965
+#   (the tail can run into the date, "N4734019111150"; the first valid DDMMHHMM ends it)
+#    91.4 98.319.419.8  192112
+#    91.4 97.6  593059  3720.517.9  6 40  50  72  202113
+#    72.9 94.130553066  3717.118.5 77 69  83  82 -552324
+#
+# Read: the header, and each row's time and static air temperature. Checked on 71 reports
+# (14-20 November): the last row is 1 minute before receipt at the median, and its
+# temperature equals the standard atmosphere at the aircraft's ADS-B altitude to -0.2 C at
+# the median (+-5 C, ordinary weather), and the header time is the first row's. The two
+# columns near 3,000 psi are shown as the hydraulic system A and B pressures, likely: a
+# 737's systems run at 3,000 psi and United's HYDN reports read 3,008-3,088 for the same
+# fleet, but nothing in this report confirms it. The rest is not read: the pairs that
+# would be engine speeds disagree as two engines at one thrust setting cannot, and the
+# first two columns do not move together as N1 and N2 must.
+A53A_HEAD = re.compile(r"A53A\r?\n *([A-Z]{1,2}-?[A-Z0-9]*?) *(0[1-9]|[12]\d|3[01])(0[1-9]|1[0-2])([01]\d|2[0-3])([0-5]\d).*?\n.*?(" + ICAO_AP + ")(" + ICAO_AP + r")ESBSM(\d\d)", re.S)
+A53A_FIRST = re.compile(r"^[ \d]{3}\.\d[ \d]{3}\.\d[ \d]\d\.\d[ \d]\d\.\d([ \d-]{4})(\d\d)(\d\d)\s*$")
+A53A_ROW = re.compile(r"^[ \d]{3}\.\d[ \d]{3}\.\d([ \d]{4})([ \d]{4})[ \d-]{4}[ \d]\d\.\d[ \d]\d\.\d[ \d-]{3}[ \d-]{3}[ \d-]{4}[ \d-]{4}([ \d-]{4})(\d\d)(\d\d)\s*$")
+
+
+def translate_a53a(text):
+    head = A53A_HEAD.match(text)
+    if not head:
+        return None
+    rows = []
+    for line in text.replace("\r", "").split("\n")[5:]:
+        if r := A53A_FIRST.match(line):
+            rows.append([f"{r[2]}:{r[3]}", int(r[1]), None, None])
+        elif r := A53A_ROW.match(line):
+            pressure = lambda v: int(v) if int(v) >= 1000 else None  # noqa: E731 - a few rows read 51-64, unexplained
+            rows.append([f"{r[4]}:{r[5]}", int(r[3]), pressure(r[1]), pressure(r[2])])
+    tail = head[1] if re.fullmatch(r"[A-Z]{1,2}-?[A-Z0-9]{3,5}", head[1]) and len(head[1]) > 2 else None
+    # The pair is a route on most reports and the same airport twice on some, not read further.
+    details = [f"Flight {head[6]} → {head[7]}" if head[6] != head[7] and airports.city(head[6]) and airports.city(head[7]) else None,
+               f"Aircraft {tail}" if tail else None, f"First sample {head[4]}:{head[5]} UTC on {head[2]}/{head[3]}"]
+    grid = table([column("Time", "UTC"), column("Outside air", "°C"),
+                  column("Hyd A", "psi", "{:,}", likely=True), column("Hyd B", "psi", "{:,}", likely=True)], rows)
+    return result("data", "Aircraft monitoring report A53A" + (f" ({plural(len(rows), 'sample')})" if rows else ""),
+                  details, tables=[grid])
 
 
 def glued_route(text):
@@ -1630,7 +1821,7 @@ def _translate_monitoring(msg):
     tagged = translate_tagged_weather(text)
     if tagged:
         return tagged
-    for reader in (translate_hydn, translate_a02, translate_pnm4, translate_delta_apm, translate_a86, translate_takeoff, translate_fd, translate_crzn,
+    for reader in (translate_hydn, translate_a02, translate_a37, translate_bldn, translate_a53a, translate_pnm4, translate_delta_apm, translate_a86, translate_takeoff, translate_fd, translate_crzn,
                    translate_crz, translate_united_engine, translate_ups_eda, translate_engine_headers, translate_named_report):
         report = reader(text)
         if report:
@@ -1651,10 +1842,13 @@ def _translate_monitoring(msg):
             return result("data", f"Automated trip report at {hhmmss(m.group(2))}", details)
         la, lo, level, speed, _ = rows[-1]
         lat, lon = int(la) / 10000, int(lo) / 10000
+        grid = table([POSITION_COLUMN, column("Flight level", "", "FL{}"), column("Ground speed", "kt"),
+                      column("Static pressure", "hPa")],
+                     [[(int(a) / 10000, int(b) / 10000), int(c), int(d), int(e)] for a, b, c, d, e in rows]) if len(rows) > 1 else None
         details.insert(1, f"Latest position {latlon(lat, lon)}")
         return result("data", f"Automated trip report ({plural(len(rows), 'sample')}, latest FL{int(level)} "
                               f"at {hhmmss(m.group(2))}, {int(speed)} kt)", details,
-                      position={"lat": lat, "lon": lon, "src": "Trip report"})
+                      position={"lat": lat, "lon": lon, "src": "Trip report"}, tables=[grid])
     # ACMS trip report samples: A38/A31938,1,1/C1TRP,155614,385774,-1026323,315,...
     m = re.search(r"(A\d\d)/A\d{5},\d,\d/C1TRP,(\d{6}),(-?\d{5,7}),(-?\d{6,8}),(\d{3})", text)
     if m:
